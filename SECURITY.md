@@ -36,7 +36,7 @@ ScanReader is designed to process legally sensitive court documents, enforcement
 
 ## 3. Reporting a Vulnerability
 
-If you discover a security vulnerability within ScanReader, please do not file a public issue. Instead, report it directly to the security maintainers:
+If you discover a security vulnerability within ScanReader, please do not file a public issue. Instead, report it directly to the security maintainer:
 
-- **Email:** `security@organization.corp`
-- **Response Time:** We acknowledge reports within 48 hours and provide remediation timelines within 5 business days.
+- **Telegram:** [@riper21](https://t.me/riper21)
+- **Response Time:** Reports are acknowledged within 48 hours, remediation timelines are provided within 5 business days.

@@ -2,7 +2,7 @@
 
 # ScanReader (AI-Система распознавания документов)
 
-[![CI](https://github.com/organization/scan-reader/actions/workflows/ci.yml/badge.svg)](https://github.com/organization/scan-reader/actions)
+[![CI](https://github.com/Riper21/ScanReader/actions/workflows/ci.yml/badge.svg)](https://github.com/Riper21/ScanReader/actions)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Code style: ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
@@ -159,6 +159,13 @@ ScanReader предоставляет **приватный строчно-ори
 ## Архитектура и таксономия статусов
 
 Подробные диаграммы компонентов, жизненный цикл обработки и семантика статусов представлены в документе [ARCHITECTURE_RU.md](ARCHITECTURE_RU.md) ([English](ARCHITECTURE.md)).
+
+---
+
+## Поддержка
+
+- 🐛 **Баги и предложения:** [GitHub Issues](https://github.com/Riper21/ScanReader/issues)
+- 💬 **Быстрые вопросы и помощь с интеграцией:** Telegram — [@riper21](https://t.me/riper21)
 
 ---
 

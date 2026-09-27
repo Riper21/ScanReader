@@ -2,7 +2,7 @@
 
 # ScanReader
 
-[![CI](https://github.com/organization/scan-reader/actions/workflows/ci.yml/badge.svg)](https://github.com/organization/scan-reader/actions)
+[![CI](https://github.com/Riper21/ScanReader/actions/workflows/ci.yml/badge.svg)](https://github.com/Riper21/ScanReader/actions)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Code style: ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
@@ -157,6 +157,13 @@ trusted in-perimeter integrations:
 ## Architecture & Status Taxonomy
 
 Detailed component diagrams, lifecycle flows, and status semantics are available in [ARCHITECTURE.md](ARCHITECTURE.md) ([Русский](ARCHITECTURE_RU.md)).
+
+---
+
+## Support
+
+- 🐛 **Bugs & feature requests:** [GitHub Issues](https://github.com/Riper21/ScanReader/issues)
+- 💬 **Quick questions & integration help:** Telegram — [@riper21](https://t.me/riper21)
 
 ---
 
