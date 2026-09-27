@@ -1,0 +1,13 @@
+[
+  {"path": "doc_date", "label": "Дата документа", "kind": "text"},
+  {"path": "reg_number", "label": "Вх. / Рег. номер", "kind": "text"},
+  {"path": "fssp.name", "label": "Отдел ФССП", "kind": "text"},
+  {"path": "court.name", "label": "Судебный орган", "kind": "text"},
+  {"path": "court.case_number", "label": "Номер дела", "kind": "text"},
+  {"path": "claimant.name", "label": "Взыскатель", "kind": "text"},
+  {"path": "debtor.name", "label": "Должник", "kind": "text"},
+  {"path": "claim_subject", "label": "Предмет требования", "kind": "text"},
+  {"path": "finances.total_rub", "label": "Сумма (руб)", "kind": "number"},
+  {"path": "has_signature_stamp", "label": "Печать/Подпись", "kind": "boolean"},
+  {"path": "is_anonymized", "label": "Анонимизация", "kind": "boolean"}
+]

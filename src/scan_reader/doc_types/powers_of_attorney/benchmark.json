@@ -1,0 +1,10 @@
+{
+  "fields": [
+    {"path": "doc_number", "weight": 1.0, "type": "string"},
+    {"path": "issue_date", "weight": 1.0, "type": "date"},
+    {"path": "principal.inn", "weight": 1.5, "type": "inn"},
+    {"path": "agent.full_name", "weight": 2.0, "type": "string"},
+    {"path": "agent.passport_number", "weight": 1.5, "type": "string"},
+    {"path": "powers_summary", "weight": 1.0, "type": "string"}
+  ]
+}

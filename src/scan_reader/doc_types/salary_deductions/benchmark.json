@@ -1,0 +1,11 @@
+{
+  "fields": [
+    {"path": "doc_date", "weight": 1.0, "type": "exact"},
+    {"path": "doc_number", "weight": 1.5, "type": "fuzzy"},
+    {"path": "ip_number", "weight": 1.5, "type": "fuzzy"},
+    {"path": "claimant_name", "weight": 2.0, "type": "fuzzy"},
+    {"path": "debtor_name", "weight": 2.0, "type": "fuzzy"},
+    {"path": "finances.total_deduction_rub", "weight": 2.0, "type": "numeric"},
+    {"path": "finances.deduction_percentage", "weight": 1.5, "type": "fuzzy"}
+  ]
+}

@@ -1,0 +1,6 @@
+include LICENSE
+include LICENSE_RU.md
+include README.md
+include README_RU.md
+recursive-include src/scan_reader/doc_types *.json *.md *.py
+recursive-include data/ground_truth *.json

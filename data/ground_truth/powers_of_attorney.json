@@ -1,0 +1,35 @@
+[
+  {
+    "file_name": "poa_sample_01.pdf",
+    "file_path": "powers_of_attorney/poa_sample_01.pdf",
+    "doc_type": "powers_of_attorney",
+    "doc_number": "ДОВ-2024/01",
+    "issue_date": "10.01.2024",
+    "city": "г. Москва",
+    "valid_until": "31.12.2024",
+    "principal": {
+      "name": "ООО «ТехноИмпорт»",
+      "inn": "7707083893",
+      "kpp": "770701001",
+      "ogrn": "1027700132195",
+      "legal_address": "125009, г. Москва, ул. Тверская, д. 5",
+      "signatory_fio": "Иванов И.И.",
+      "signatory_position": "Генеральный директор",
+      "signatory_basis": "Устав"
+    },
+    "agent": {
+      "full_name": "Сидоров Алексей Петрович",
+      "passport_series": "4515",
+      "passport_number": "654321",
+      "passport_issued_by": "ТП №1 ОУФМС России по г. Москве",
+      "passport_issue_date": "14.05.2016",
+      "snils": "112-233-445 95",
+      "inn": "7707083893",
+      "registration_address": "г. Москва, ул. Арбат, д. 10, кв. 25"
+    },
+    "powers_summary": "Представление интересов в налоговых органах, подписание актов, получение ТМЦ",
+    "can_subdelegate": false,
+    "is_notarized": false,
+    "has_signature_stamp": true
+  }
+]

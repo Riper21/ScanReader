@@ -1,0 +1,13 @@
+[
+  {"path": "case_number", "label": "Номер дела", "kind": "text"},
+  {"path": "act_date", "label": "Дата судебного акта", "kind": "text"},
+  {"path": "court.name", "label": "Судебный орган", "kind": "text"},
+  {"path": "claimant.name", "label": "Взыскатель", "kind": "text"},
+  {"path": "debtor.name", "label": "Должник", "kind": "text"},
+  {"path": "claim_subject", "label": "Предмет иска", "kind": "text"},
+  {"path": "finances.total_rub", "label": "Взыскано (руб)", "kind": "number"},
+  {"path": "blank_series", "label": "Серия бланка", "kind": "text"},
+  {"path": "blank_number", "label": "Номер бланка", "kind": "text"},
+  {"path": "has_signature_stamp", "label": "Печать и подпись", "kind": "boolean"},
+  {"path": "is_anonymized", "label": "Анонимизация", "kind": "boolean"}
+]

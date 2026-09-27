@@ -1,0 +1,7 @@
+# Output directory for ScanReader
+# Extracted JSON results and Excel summaries will be saved here:
+# - <stem>_Full.json
+# - <stem>_Flat.json
+# - Registry_Full.json
+# - Registry_Flat.json
+# - Сводный_реестр_документов.xlsx

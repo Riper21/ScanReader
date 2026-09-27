@@ -1,0 +1,34 @@
+{
+  "id": "hr_orders",
+  "title": "Трудовые приказы (Кадры: Т-1, Т-5, Т-6, Т-8)",
+  "short_title": "Кадровые приказы",
+  "version": "1.0.0",
+  "enabled": true,
+  "order": 9,
+  "tie_priority": 14,
+  "folder": "hr_orders",
+  "registry_base_name": "registry_hr_orders",
+  "js_filename": "hr_orders.js",
+  "js_var": "HR_ORDERS_DATA",
+  "gt_file": "hr_orders.json",
+  "schema_class": "HrOrderDoc",
+  "classifier": {
+    "keywords": [
+      "приказ о приеме",
+      "приказ об увольнении",
+      "приказ о переводе",
+      "приказ на отпуск",
+      "трудовой приказ",
+      "кадровый приказ",
+      "форма т-1",
+      "форма т-5",
+      "форма т-6",
+      "форма т-8"
+    ]
+  },
+  "dashboard": {
+    "icon": "👥",
+    "color": "green",
+    "badge": "Кадры"
+  }
+}

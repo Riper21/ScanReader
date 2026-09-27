@@ -1,0 +1,28 @@
+{
+  "fields": [
+    {
+      "field": "doc_number",
+      "rule": "not_empty",
+      "severity": "CRITICAL",
+      "message": "Номер УПД обязателен"
+    },
+    {
+      "field": "seller.inn",
+      "rule": "valid_inn",
+      "severity": "CRITICAL",
+      "message": "ИНН продавца обязателен"
+    },
+    {
+      "field": "buyer.inn",
+      "rule": "valid_inn",
+      "severity": "CRITICAL",
+      "message": "ИНН покупателя обязателен"
+    },
+    {
+      "field": "finances.total_rub",
+      "rule": "positive_number",
+      "severity": "CRITICAL",
+      "message": "Итоговая сумма УПД должна быть положительной"
+    }
+  ]
+}

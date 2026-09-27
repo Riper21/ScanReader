@@ -1,0 +1,20 @@
+[
+  {"path": "doc_number", "label": "Номер приказа", "kind": "text"},
+  {"path": "doc_date", "label": "Дата приказа", "kind": "date"},
+  {"path": "form_code", "label": "Форма (Т-1/Т-5/Т-8)", "kind": "text"},
+  {"path": "order_type", "label": "Тип кадрового приказа", "kind": "text"},
+  {"path": "organization_name", "label": "Организация", "kind": "text"},
+  {"path": "organization_inn", "label": "ИНН организации", "kind": "text"},
+  {"path": "employee.full_name", "label": "ФИО работника", "kind": "text"},
+  {"path": "employee.personnel_number", "label": "Табельный номер", "kind": "text"},
+  {"path": "employee.structural_unit", "label": "Подразделение", "kind": "text"},
+  {"path": "employee.position", "label": "Должность", "kind": "text"},
+  {"path": "employee.salary_rub", "label": "Оклад (руб)", "kind": "number"},
+  {"path": "effective_date_from", "label": "Дата начала/приема", "kind": "text"},
+  {"path": "effective_date_to", "label": "Дата окончания/увольнения", "kind": "text"},
+  {"path": "employment_contract_number", "label": "Трудовой договор №", "kind": "text"},
+  {"path": "employment_contract_date", "label": "Дата договора", "kind": "text"},
+  {"path": "director_signatory", "label": "Руководитель", "kind": "text"},
+  {"path": "employee_signature_date", "label": "Ознакомлен", "kind": "text"},
+  {"path": "has_signatures", "label": "Подписи", "kind": "boolean"}
+]

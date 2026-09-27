@@ -1,0 +1,28 @@
+{
+  "fields": [
+    {
+      "field": "doc_number",
+      "rule": "not_empty",
+      "severity": "CRITICAL",
+      "message": "Номер акта обязателен"
+    },
+    {
+      "field": "contractor.inn",
+      "rule": "valid_inn",
+      "severity": "CRITICAL",
+      "message": "ИНН исполнителя обязателен"
+    },
+    {
+      "field": "customer.inn",
+      "rule": "valid_inn",
+      "severity": "CRITICAL",
+      "message": "ИНН заказчика обязателен"
+    },
+    {
+      "field": "finances.total_rub",
+      "rule": "positive_number",
+      "severity": "CRITICAL",
+      "message": "Итоговая сумма акта должна быть указана"
+    }
+  ]
+}

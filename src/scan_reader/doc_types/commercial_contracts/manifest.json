@@ -1,0 +1,31 @@
+{
+  "id": "commercial_contracts",
+  "title": "Договоры (поставка, подряд, услуги, аренда)",
+  "short_title": "Договоры",
+  "version": "1.0.0",
+  "enabled": true,
+  "order": 4,
+  "tie_priority": 15,
+  "folder": "commercial_contracts",
+  "registry_base_name": "registry_commercial_contracts",
+  "js_filename": "commercial_contracts.js",
+  "js_var": "COMMERCIAL_CONTRACTS_DATA",
+  "gt_file": "commercial_contracts.json",
+  "schema_class": "CommercialContractDoc",
+  "classifier": {
+    "keywords": [
+      "договор",
+      "договор поставки",
+      "договор подряда",
+      "договор аренды",
+      "договор об оказании услуг",
+      "настоящий договор",
+      "договора №"
+    ]
+  },
+  "dashboard": {
+    "icon": "📝",
+    "color": "orange",
+    "badge": "Договоры"
+  }
+}

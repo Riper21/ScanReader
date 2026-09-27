@@ -1,0 +1,10 @@
+{
+  "fields": [
+    {"path": "doc_number", "weight": 1.0, "type": "string"},
+    {"path": "doc_date", "weight": 1.0, "type": "date"},
+    {"path": "form_code", "weight": 1.0, "type": "string"},
+    {"path": "organization_inn", "weight": 1.5, "type": "inn"},
+    {"path": "employee.full_name", "weight": 2.0, "type": "string"},
+    {"path": "employee.salary_rub", "weight": 2.0, "type": "number"}
+  ]
+}

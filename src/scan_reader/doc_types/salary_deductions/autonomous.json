@@ -1,0 +1,22 @@
+{
+  "fields": [
+    {
+      "field": "debtor_name",
+      "rule": "not_empty",
+      "severity": "CRITICAL",
+      "message": "ФИО должника обязательно для постановления об удержании"
+    },
+    {
+      "field": "claimant_name",
+      "rule": "not_empty",
+      "severity": "CRITICAL",
+      "message": "Взыскатель должен быть указан"
+    },
+    {
+      "field": "finances.total_deduction_rub",
+      "rule": "positive_number_or_percentage",
+      "severity": "HIGH",
+      "message": "Должна быть указана сумма долга или процент удержания"
+    }
+  ]
+}

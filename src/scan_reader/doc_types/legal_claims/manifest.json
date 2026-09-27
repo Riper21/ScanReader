@@ -1,0 +1,28 @@
+{
+  "id": "legal_claims",
+  "title": "Досудебные претензии и требования",
+  "short_title": "Претензии",
+  "version": "1.0.0",
+  "enabled": true,
+  "order": 8,
+  "tie_priority": 19,
+  "folder": "legal_claims",
+  "registry_base_name": "registry_legal_claims",
+  "js_filename": "legal_claims.js",
+  "js_var": "LEGAL_CLAIMS_DATA",
+  "gt_file": "legal_claims.json",
+  "schema_class": "LegalClaimDoc",
+  "classifier": {
+    "keywords": [
+      "претензия",
+      "досудебная претензия",
+      "требование об оплате",
+      "претензионное письмо"
+    ]
+  },
+  "dashboard": {
+    "icon": "⚠️",
+    "color": "orange",
+    "badge": "Претензии"
+  }
+}

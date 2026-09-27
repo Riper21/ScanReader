@@ -1,0 +1,22 @@
+{
+  "fields": [
+    {
+      "field": "claimant.name",
+      "rule": "not_empty",
+      "severity": "CRITICAL",
+      "message": "Взыскатель должен быть обязательно указан"
+    },
+    {
+      "field": "debtor.name",
+      "rule": "not_empty",
+      "severity": "CRITICAL",
+      "message": "Должник должен быть обязательно указан"
+    },
+    {
+      "field": "doc_date",
+      "rule": "valid_date_format",
+      "severity": "HIGH",
+      "message": "Дата документа должна быть в формате ДД.ММ.ГГГГ"
+    }
+  ]
+}

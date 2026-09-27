@@ -1,0 +1,9 @@
+{
+  "fields": [
+    {"path": "doc_number", "weight": 1.0, "type": "string"},
+    {"path": "doc_date", "weight": 1.0, "type": "date"},
+    {"path": "contractor.inn", "weight": 1.5, "type": "inn"},
+    {"path": "customer.inn", "weight": 1.5, "type": "inn"},
+    {"path": "finances.total_rub", "weight": 2.0, "type": "number"}
+  ]
+}

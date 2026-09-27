@@ -1,0 +1,39 @@
+# -*- coding: utf-8 -*-
+"""
+Tests for Cross-Modal Anti-Hallucination Gate.
+"""
+
+from scan_reader.verifier.hallucination_gate import (
+    audit_cross_modal_consistency,
+    check_presence_in_raw_text,
+    normalize_token,
+)
+
+
+def test_normalize_token():
+    assert normalize_token("«Иванов И.И.»") == "ивановии"
+    assert normalize_token("7701-234-567") == "7701234567"
+
+
+def test_check_presence():
+    raw_ocr = "Взыскать с должника Иванова Ивана Ивановича, ИНН 7707083893, сумму 15000 рублей."
+    assert check_presence_in_raw_text("7707083893", raw_ocr) is True
+    assert check_presence_in_raw_text("Иванов", raw_ocr) is True
+    assert check_presence_in_raw_text("Сидоров", raw_ocr) is False
+
+
+def test_audit_cross_modal_consistency_detects_hallucination():
+    raw_ocr = "Судебный приказ вынесен в отношении Петрова П.П., сумма 10000 руб."
+    extracted = {
+        "debtor": {
+            "name": "Сидоров Алексей Васильевич",
+            "inn": "7707083893",
+        },
+        "ip_number": "99999/22/11111-ИП",
+    }
+
+    discrepancies = audit_cross_modal_consistency(extracted, raw_ocr)
+    assert len(discrepancies) >= 2
+    fields = [d["field"] for d in discrepancies]
+    assert "debtor.name" in fields
+    assert "debtor.inn" in fields

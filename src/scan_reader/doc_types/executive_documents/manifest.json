@@ -1,0 +1,23 @@
+{
+  "id": "executive_documents",
+  "title": "Исполнительные листы судебных органов",
+  "short_title": "Исполнительные листы",
+  "version": "1.0.0",
+  "enabled": true,
+  "order": 2,
+  "tie_priority": 20,
+  "folder": "Исполнительные_листы",
+  "registry_base_name": "registry_executive_documents",
+  "js_filename": "executive_documents.js",
+  "js_var": "EXECUTIVE_DOCUMENTS_DATA",
+  "gt_file": "executive_documents.json",
+  "schema_class": "ExecutiveDocumentDoc",
+  "classifier": {
+    "keywords": ["исполнительный лист", "серия фс", "серия вс", "именем российской федерации", "арбитражный суд", "городской суд", "районный суд"]
+  },
+  "dashboard": {
+    "icon": "⚖️",
+    "color": "blue",
+    "badge": "Исполнительные листы"
+  }
+}

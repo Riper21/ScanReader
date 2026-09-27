@@ -1,0 +1,35 @@
+{
+  "fields": [
+    {
+      "field": "doc_number",
+      "rule": "not_empty",
+      "severity": "CRITICAL",
+      "message": "Номер доверенности обязателен"
+    },
+    {
+      "field": "issue_date",
+      "rule": "valid_date_format",
+      "severity": "CRITICAL",
+      "message": "Дата выдачи доверенности обязательна"
+    },
+    {
+      "field": "principal.name",
+      "rule": "not_empty",
+      "severity": "CRITICAL",
+      "message": "Доверитель должен быть указан"
+    },
+    {
+      "field": "agent.full_name",
+      "rule": "not_empty",
+      "severity": "CRITICAL",
+      "message": "Поверенный должен быть указан"
+    },
+    {
+      "field": "powers_summary",
+      "rule": "not_empty",
+      "severity": "HIGH",
+      "message": "Полномочия представителя должны быть описаны"
+    }
+  ],
+  "confidence_threshold": 0.65
+}

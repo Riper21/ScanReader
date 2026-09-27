@@ -1,0 +1,10 @@
+{
+  "fields": [
+    {"path": "doc_date", "weight": 1.0, "type": "exact"},
+    {"path": "court.case_number", "weight": 1.5, "type": "fuzzy"},
+    {"path": "claimant.name", "weight": 2.0, "type": "fuzzy"},
+    {"path": "debtor.name", "weight": 2.0, "type": "fuzzy"},
+    {"path": "claim_subject", "weight": 1.5, "type": "fuzzy"},
+    {"path": "finances.total_rub", "weight": 2.0, "type": "numeric"}
+  ]
+}

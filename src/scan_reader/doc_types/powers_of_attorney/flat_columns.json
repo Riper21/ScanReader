@@ -1,0 +1,18 @@
+[
+  {"path": "doc_number", "label": "Номер доверенности", "kind": "text"},
+  {"path": "issue_date", "label": "Дата выдачи", "kind": "date"},
+  {"path": "valid_until", "label": "Срок действия", "kind": "text"},
+  {"path": "city", "label": "Город", "kind": "text"},
+  {"path": "principal.name", "label": "Доверитель (Организация/ФИО)", "kind": "text"},
+  {"path": "principal.inn", "label": "ИНН доверителя", "kind": "text"},
+  {"path": "principal.ogrn", "label": "ОГРН доверителя", "kind": "text"},
+  {"path": "principal.signatory_fio", "label": "Подписант доверителя", "kind": "text"},
+  {"path": "agent.full_name", "label": "Поверенный (ФИО)", "kind": "text"},
+  {"path": "agent.passport_series", "label": "Паспорт серия", "kind": "text"},
+  {"path": "agent.passport_number", "label": "Паспорт номер", "kind": "text"},
+  {"path": "agent.snils", "label": "СНИЛС поверенного", "kind": "text"},
+  {"path": "powers_summary", "label": "Полномочия", "kind": "text"},
+  {"path": "can_subdelegate", "label": "Передоверие", "kind": "boolean"},
+  {"path": "is_notarized", "label": "Нотариальная", "kind": "boolean"},
+  {"path": "has_signature_stamp", "label": "Подпись и печать", "kind": "boolean"}
+]

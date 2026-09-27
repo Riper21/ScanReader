@@ -1,0 +1,40 @@
+[
+  {
+    "file_name": "contract_postavka_01.pdf",
+    "file_path": "commercial_contracts/contract_postavka_01.pdf",
+    "doc_type": "commercial_contracts",
+    "doc_number": "П-2024/11",
+    "doc_date": "10.02.2024",
+    "city": "г. Москва",
+    "contract_type": "Договор поставки",
+    "claim_subject": "Поставка серверного оборудования и сетевых коммутаторов",
+    "party_one": {
+      "name": "ООО «ТехноИмпорт»",
+      "role": "Покупатель",
+      "inn": "7707083893",
+      "kpp": "770701001",
+      "ogrn": "1027700132195",
+      "signatory_fio": "Иванов И.И.",
+      "signatory_basis": "Устав"
+    },
+    "party_two": {
+      "name": "АО «ДатаСервер»",
+      "role": "Поставщик",
+      "inn": "7736207543",
+      "kpp": "773601001",
+      "ogrn": "1027700229193",
+      "signatory_fio": "Петров П.П.",
+      "signatory_basis": "Доверенность № 12"
+    },
+    "finances": {
+      "total_rub": 2400000.0,
+      "vat_included": true,
+      "vat_rate": "20%",
+      "vat_amount_rub": 400000.0,
+      "currency": "RUB"
+    },
+    "term_start": "10.02.2024",
+    "term_end": "31.12.2024",
+    "has_signature_stamp": true
+  }
+]

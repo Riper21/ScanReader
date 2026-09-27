@@ -1,0 +1,33 @@
+[
+  {
+    "file_name": "hr_order_sample_01.pdf",
+    "file_path": "hr_orders/hr_order_sample_01.pdf",
+    "doc_type": "hr_orders",
+    "doc_number": "15-К",
+    "doc_date": "01.03.2024",
+    "form_code": "Т-1",
+    "order_type": "Прием на работу",
+    "organization_name": "ООО «ТехноИмпорт»",
+    "organization_inn": "7707083893",
+    "organization_okpo": "12345678",
+    "employee": {
+      "full_name": "Кузнецов Дмитрий Сергеевич",
+      "personnel_number": "00142",
+      "structural_unit": "ИТ-отдел",
+      "position": "Системный администратор",
+      "salary_rub": 120000.0,
+      "bonus_rub": 15000.0,
+      "snils": "112-233-445 95",
+      "inn": "7707083893"
+    },
+    "effective_date_from": "04.03.2024",
+    "effective_date_to": "",
+    "probation_period_months": 3,
+    "employment_contract_number": "ТД-142",
+    "employment_contract_date": "01.03.2024",
+    "order_basis": "Трудовой договор от 01.03.2024 № ТД-142",
+    "director_signatory": "Иванов И.И.",
+    "employee_signature_date": "01.03.2024",
+    "has_signatures": true
+  }
+]

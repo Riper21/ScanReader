@@ -1,0 +1,32 @@
+{
+  "id": "acceptance_certificates",
+  "title": "Акты сдачи-приемки выполненных работ и оказанных услуг",
+  "short_title": "Акты приема-передачи",
+  "version": "1.0.0",
+  "enabled": true,
+  "order": 6,
+  "tie_priority": 17,
+  "folder": "acceptance_certificates",
+  "registry_base_name": "registry_acceptance_certificates",
+  "js_filename": "acceptance_certificates.js",
+  "js_var": "ACCEPTANCE_CERTIFICATES_DATA",
+  "gt_file": "acceptance_certificates.json",
+  "schema_class": "AcceptanceCertificateDoc",
+  "classifier": {
+    "keywords": [
+      "акт сдачи-приемки",
+      "акт оказанных услуг",
+      "акт выполненных работ",
+      "акт приема-передачи",
+      "акт приема передачи",
+      "акт сверки",
+      "работы выполнены в полном объеме",
+      "претензий не имеют"
+    ]
+  },
+  "dashboard": {
+    "icon": "📋",
+    "color": "blue",
+    "badge": "Акты"
+  }
+}

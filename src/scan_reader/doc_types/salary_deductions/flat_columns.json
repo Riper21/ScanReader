@@ -1,0 +1,18 @@
+[
+  {"path": "doc_date", "label": "Дата постановления", "kind": "text"},
+  {"path": "doc_number", "label": "Номер постановления", "kind": "text"},
+  {"path": "ip_number", "label": "Номер ИП", "kind": "text"},
+  {"path": "base_doc_number", "label": "Номер ИД-основания", "kind": "text"},
+  {"path": "base_doc_date", "label": "Дата ИД-основания", "kind": "text"},
+  {"path": "authority.name", "label": "Орган ФССП", "kind": "text"},
+  {"path": "claimant_name", "label": "Взыскатель", "kind": "text"},
+  {"path": "debtor_name", "label": "Должник (работник)", "kind": "text"},
+  {"path": "employer.name", "label": "Работодатель", "kind": "text"},
+  {"path": "finances.total_deduction_rub", "label": "Сумма удержания (руб)", "kind": "number"},
+  {"path": "finances.deduction_percentage", "label": "% удержания", "kind": "text"},
+  {"path": "payment_details.bik", "label": "БИК получателя", "kind": "text"},
+  {"path": "payment_details.payment_account", "label": "Казначейский счет (032...)", "kind": "text"},
+  {"path": "payment_details.uin", "label": "УИН", "kind": "text"},
+  {"path": "payment_details.rosp_code", "label": "Код РОСП", "kind": "text"},
+  {"path": "has_signature_stamp", "label": "Печать и подпись", "kind": "boolean"}
+]

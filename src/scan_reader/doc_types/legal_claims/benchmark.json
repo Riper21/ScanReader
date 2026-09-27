@@ -1,0 +1,10 @@
+{
+  "fields": [
+    {"path": "doc_number", "weight": 1.0, "type": "string"},
+    {"path": "doc_date", "weight": 1.0, "type": "date"},
+    {"path": "sender.inn", "weight": 1.5, "type": "inn"},
+    {"path": "recipient.inn", "weight": 1.5, "type": "inn"},
+    {"path": "finances.principal_debt_rub", "weight": 2.0, "type": "number"},
+    {"path": "finances.total_claim_rub", "weight": 2.0, "type": "number"}
+  ]
+}

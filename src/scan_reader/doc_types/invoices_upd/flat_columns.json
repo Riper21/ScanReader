@@ -1,0 +1,13 @@
+[
+  {"path": "doc_number", "label": "Номер УПД/СФ", "kind": "text"},
+  {"path": "doc_date", "label": "Дата УПД/СФ", "kind": "text"},
+  {"path": "status", "label": "Статус", "kind": "text"},
+  {"path": "seller.name", "label": "Продавец", "kind": "text"},
+  {"path": "seller.inn", "label": "ИНН Продавца", "kind": "text"},
+  {"path": "buyer.name", "label": "Покупатель", "kind": "text"},
+  {"path": "buyer.inn", "label": "ИНН Покупателя", "kind": "text"},
+  {"path": "contract_base", "label": "Основание (договор)", "kind": "text"},
+  {"path": "finances.total_rub_no_vat", "label": "Сумма без НДС", "kind": "number"},
+  {"path": "finances.total_vat_rub", "label": "Сумма НДС", "kind": "number"},
+  {"path": "finances.total_rub", "label": "Всего с НДС (руб)", "kind": "number"}
+]

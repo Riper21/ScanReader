@@ -1,0 +1,13 @@
+[
+  {"path": "doc_number", "label": "Номер договора", "kind": "text"},
+  {"path": "doc_date", "label": "Дата договора", "kind": "text"},
+  {"path": "contract_type", "label": "Вид договора", "kind": "text"},
+  {"path": "party_one.name", "label": "Сторона 1 (Заказчик/Покупатель)", "kind": "text"},
+  {"path": "party_one.inn", "label": "ИНН Стороны 1", "kind": "text"},
+  {"path": "party_two.name", "label": "Сторона 2 (Поставщик/Подрядчик)", "kind": "text"},
+  {"path": "party_two.inn", "label": "ИНН Стороны 2", "kind": "text"},
+  {"path": "claim_subject", "label": "Предмет договора", "kind": "text"},
+  {"path": "finances.total_rub", "label": "Сумма договора (руб)", "kind": "number"},
+  {"path": "finances.vat_rate", "label": "Ставка НДС", "kind": "text"},
+  {"path": "term_end", "label": "Срок действия", "kind": "text"}
+]

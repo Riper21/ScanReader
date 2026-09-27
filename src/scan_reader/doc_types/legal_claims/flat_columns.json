@@ -1,0 +1,20 @@
+[
+  {"path": "doc_number", "label": "Номер претензии", "kind": "text"},
+  {"path": "doc_date", "label": "Дата претензии", "kind": "date"},
+  {"path": "city", "label": "Город", "kind": "text"},
+  {"path": "sender.name", "label": "Заявитель (Кредитор)", "kind": "text"},
+  {"path": "sender.inn", "label": "ИНН заявителя", "kind": "text"},
+  {"path": "recipient.name", "label": "Получатель (Должник)", "kind": "text"},
+  {"path": "recipient.inn", "label": "ИНН должника", "kind": "text"},
+  {"path": "contract_basis_number", "label": "Договор №", "kind": "text"},
+  {"path": "contract_basis_date", "label": "Дата договора", "kind": "text"},
+  {"path": "claim_subject", "label": "Суть требований", "kind": "text"},
+  {"path": "finances.principal_debt_rub", "label": "Основной долг (руб)", "kind": "number"},
+  {"path": "finances.penalty_rub", "label": "Пени/Неустойка (руб)", "kind": "number"},
+  {"path": "finances.interest_rub", "label": "Проценты 395 ГК (руб)", "kind": "number"},
+  {"path": "finances.total_claim_rub", "label": "Всего претензия (руб)", "kind": "number"},
+  {"path": "response_deadline_days", "label": "Срок ответа (дней)", "kind": "number"},
+  {"path": "response_deadline_date", "label": "Дедлайн ответа", "kind": "text"},
+  {"path": "bank_requisites", "label": "Реквизиты оплаты", "kind": "text"},
+  {"path": "has_signature_stamp", "label": "Подпись и печать", "kind": "boolean"}
+]

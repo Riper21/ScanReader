@@ -1,0 +1,30 @@
+{
+  "id": "invoices_upd",
+  "title": "УПД (Универсальный передаточный документ) и накладные",
+  "short_title": "УПД и накладные",
+  "version": "1.0.0",
+  "enabled": true,
+  "order": 5,
+  "tie_priority": 16,
+  "folder": "invoices_upd",
+  "registry_base_name": "registry_invoices_upd",
+  "js_filename": "invoices_upd.js",
+  "js_var": "INVOICES_UPD_DATA",
+  "gt_file": "invoices_upd.json",
+  "schema_class": "InvoiceUpdDoc",
+  "classifier": {
+    "keywords": [
+      "универсальный передаточный документ",
+      "упд",
+      "счет-фактура",
+      "товарная накладная",
+      "торг-12",
+      "накладная"
+    ]
+  },
+  "dashboard": {
+    "icon": "🧾",
+    "color": "blue",
+    "badge": "УПД"
+  }
+}

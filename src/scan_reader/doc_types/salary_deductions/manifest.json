@@ -1,0 +1,23 @@
+{
+  "id": "salary_deductions",
+  "title": "Постановления об обращении взыскания на заработную плату",
+  "short_title": "Взыскание на зарплату",
+  "version": "1.0.0",
+  "enabled": true,
+  "order": 3,
+  "tie_priority": 30,
+  "folder": "Взыскание_на_зарплату",
+  "registry_base_name": "registry_salary_deductions",
+  "js_filename": "salary_deductions.js",
+  "js_var": "SALARY_DEDUCTIONS_DATA",
+  "gt_file": "salary_deductions.json",
+  "schema_class": "SalaryDeductionDoc",
+  "classifier": {
+    "keywords": ["взыскании на заработную плату", "доходы должника", "работодатель", "удержание из заработной платы", "бухгалтерия", "судебный пристав-исполнитель"]
+  },
+  "dashboard": {
+    "icon": "💼",
+    "color": "green",
+    "badge": "Взыскание на зарплату"
+  }
+}

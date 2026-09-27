@@ -1,0 +1,35 @@
+[
+  {
+    "file_name": "claim_sample_01.pdf",
+    "file_path": "legal_claims/claim_sample_01.pdf",
+    "doc_type": "legal_claims",
+    "doc_number": "ПР-15/24",
+    "doc_date": "05.04.2024",
+    "city": "г. Москва",
+    "sender": {
+      "name": "ООО «ТехноИмпорт»",
+      "inn": "7707083893",
+      "kpp": "770701001",
+      "address": "г. Москва, ул. Тверская, д. 5"
+    },
+    "recipient": {
+      "name": "АО «ДатаСервер»",
+      "inn": "7736207543",
+      "kpp": "773601001",
+      "address": "г. Москва, Ленинский пр-т, д. 2"
+    },
+    "contract_basis_number": "П-2024/11",
+    "contract_basis_date": "10.02.2024",
+    "claim_subject": "Просрочка поставки партии оборудования",
+    "finances": {
+      "principal_debt_rub": 500000.0,
+      "penalty_rub": 25000.0,
+      "interest_rub": 0.0,
+      "total_claim_rub": 525000.0,
+      "currency": "RUB"
+    },
+    "response_deadline_days": 10,
+    "bank_requisites": "р/с 40702810000000000001 в ПАО Сбербанк, БИК 044525225",
+    "has_signature_stamp": true
+  }
+]

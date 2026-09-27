@@ -1,0 +1,29 @@
+{
+  "fields": [
+    {
+      "field": "doc_number",
+      "rule": "not_empty",
+      "severity": "CRITICAL",
+      "message": "Номер приказа обязателен"
+    },
+    {
+      "field": "doc_date",
+      "rule": "valid_date_format",
+      "severity": "CRITICAL",
+      "message": "Дата приказа обязательна"
+    },
+    {
+      "field": "organization_name",
+      "rule": "not_empty",
+      "severity": "CRITICAL",
+      "message": "Наименование организации обязательно"
+    },
+    {
+      "field": "employee.full_name",
+      "rule": "not_empty",
+      "severity": "CRITICAL",
+      "message": "ФИО сотрудника обязательно"
+    }
+  ],
+  "confidence_threshold": 0.65
+}

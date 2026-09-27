@@ -1,0 +1,22 @@
+{
+  "fields": [
+    {
+      "field": "case_number",
+      "rule": "not_empty",
+      "severity": "CRITICAL",
+      "message": "Номер судебного дела обязателен для исполнительного листа"
+    },
+    {
+      "field": "claimant.name",
+      "rule": "not_empty",
+      "severity": "CRITICAL",
+      "message": "Взыскатель должен быть указан"
+    },
+    {
+      "field": "debtor.name",
+      "rule": "not_empty",
+      "severity": "CRITICAL",
+      "message": "Должник должен быть указан"
+    }
+  ]
+}

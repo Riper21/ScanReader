@@ -1,0 +1,28 @@
+{
+  "id": "powers_of_attorney",
+  "title": "Доверенности юридических и физических лиц",
+  "short_title": "Доверенности",
+  "version": "1.0.0",
+  "enabled": true,
+  "order": 7,
+  "tie_priority": 18,
+  "folder": "powers_of_attorney",
+  "registry_base_name": "registry_powers_of_attorney",
+  "js_filename": "powers_of_attorney.js",
+  "js_var": "POWERS_OF_ATTORNEY_DATA",
+  "gt_file": "powers_of_attorney.json",
+  "schema_class": "PowerOfAttorneyDoc",
+  "classifier": {
+    "keywords": [
+      "доверенность",
+      "доверяет",
+      "настоящей доверенностью",
+      "уполномочивает"
+    ]
+  },
+  "dashboard": {
+    "icon": "🔐",
+    "color": "purple",
+    "badge": "Доверенности"
+  }
+}

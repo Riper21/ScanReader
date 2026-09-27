@@ -1,0 +1,100 @@
+[build-system]
+requires = ["setuptools>=77.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scan-reader"
+version = "0.8.0"
+description = "AI legal document recognition, Zero-Trust verification, and 1C/Excel registry orchestration"
+readme = "README.md"
+authors = [{ name = "ScanReader Contributors" }]
+license = "MIT"
+license-files = ["LICENSE", "LICENSE_RU.md"]
+requires-python = ">=3.9"
+dependencies = [
+    "pydantic>=2.6,<3.0",
+    "openai>=1.30",
+    "Pillow>=10.0",
+    "pymupdf>=1.24",
+    "python-docx>=1.1.0",
+    "docx2txt>=0.8",
+    "openpyxl>=3.1",
+    "pandas>=2.0",
+    "httpx>=0.27.0",
+    "python-dotenv>=1.0",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Legal Industry",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Office/Business :: Financial :: Accounting",
+]
+keywords = [
+    "vlm", "ocr", "document-analysis", "legal-tech", "zero-trust",
+    "fssp", "court-orders", "1c", "excel-registry", "mcp"
+]
+
+[project.optional-dependencies]
+dev = [
+    "build>=1.0",
+    "mypy>=1.13",
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.9",
+]
+
+[project.scripts]
+scan-reader = "scan_reader.cli:main"
+scanreader = "scan_reader.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"scan_reader" = ["doc_types/*/*.json", "doc_types/*/*.md", "doc_types/*/*.py"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra"
+
+[tool.coverage.run]
+branch = true
+source = ["scan_reader"]
+
+[tool.coverage.report]
+fail_under = 55
+show_missing = true
+skip_covered = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# load_dotenv обязан выполняться ДО импортов, читающих env на уровне модуля
+# (type_registry создает логгер с LOG_LEVEL при импорте) — импорты не вверху файла.
+"src/scan_reader/facade.py" = ["E402"]
+# Примеры добавляют src/ в sys.path перед импортом scan_reader
+"examples/*.py" = ["E402"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["src"]
+check_untyped_defs = true
+no_implicit_optional = true
+ignore_missing_imports = true
+warn_redundant_casts = true

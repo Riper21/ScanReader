@@ -1,0 +1,35 @@
+{
+  "fields": [
+    {
+      "field": "doc_number",
+      "rule": "not_empty",
+      "severity": "CRITICAL",
+      "message": "Номер претензии обязателен"
+    },
+    {
+      "field": "doc_date",
+      "rule": "valid_date_format",
+      "severity": "CRITICAL",
+      "message": "Дата составления претензии обязательна"
+    },
+    {
+      "field": "sender.name",
+      "rule": "not_empty",
+      "severity": "CRITICAL",
+      "message": "Заявитель претензии должен быть указан"
+    },
+    {
+      "field": "recipient.name",
+      "rule": "not_empty",
+      "severity": "CRITICAL",
+      "message": "Получатель претензии должен быть указан"
+    },
+    {
+      "field": "finances.total_claim_rub",
+      "rule": "positive_number_or_percentage",
+      "severity": "HIGH",
+      "message": "Сумма претензионных требований должна быть положительным числом"
+    }
+  ],
+  "confidence_threshold": 0.65
+}

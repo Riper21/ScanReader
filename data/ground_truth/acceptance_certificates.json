@@ -1,0 +1,33 @@
+[
+  {
+    "file_name": "akt_sample_01.pdf",
+    "file_path": "acceptance_certificates/akt_sample_01.pdf",
+    "doc_type": "acceptance_certificates",
+    "doc_number": "АКТ-88",
+    "doc_date": "20.03.2024",
+    "contract_number": "П-2024/11",
+    "contract_date": "10.02.2024",
+    "contractor": {
+      "name": "АО «ДатаСервер»",
+      "inn": "7736207543",
+      "kpp": "773601001"
+    },
+    "customer": {
+      "name": "ООО «ТехноИмпорт»",
+      "inn": "7707083893",
+      "kpp": "770701001"
+    },
+    "period_start": "10.02.2024",
+    "period_end": "20.03.2024",
+    "claim_subject": "Монтаж и пусконаладка серверного оборудования",
+    "finances": {
+      "amount_no_vat_rub": 300000.0,
+      "vat_rate": "20%",
+      "vat_amount_rub": 60000.0,
+      "total_rub": 360000.0,
+      "currency": "RUB"
+    },
+    "claims_reserved": false,
+    "has_signature_stamp": true
+  }
+]

@@ -1,0 +1,23 @@
+{
+  "id": "enforcement_orders",
+  "title": "Приказы и заявления о возбуждении ИП",
+  "short_title": "Приказы ИП",
+  "version": "1.0.0",
+  "enabled": true,
+  "order": 1,
+  "tie_priority": 10,
+  "folder": "Приказы_ИП",
+  "registry_base_name": "registry_enforcement_orders",
+  "js_filename": "enforcement_orders.js",
+  "js_var": "ENFORCEMENT_ORDERS_DATA",
+  "gt_file": "enforcement_orders.json",
+  "schema_class": "EnforcementOrderDoc",
+  "classifier": {
+    "keywords": ["возбуждении исполнительного производства", "заявление взыскателя", "судебный пристав-исполнитель", "росп", "уфссп", "вх. №"]
+  },
+  "dashboard": {
+    "icon": "📜",
+    "color": "purple",
+    "badge": "Приказы ИП"
+  }
+}

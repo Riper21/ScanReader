@@ -1,0 +1,43 @@
+[
+  {
+    "file_name": "upd_sample_01.pdf",
+    "file_path": "invoices_upd/upd_sample_01.pdf",
+    "doc_type": "invoices_upd",
+    "doc_number": "104",
+    "doc_date": "15.03.2024",
+    "status": "1",
+    "seller": {
+      "name": "ООО «ТехноИмпорт»",
+      "inn": "7707083893",
+      "kpp": "770701001",
+      "address": "125009, г. Москва, ул. Тверская, д. 5"
+    },
+    "buyer": {
+      "name": "АО «ДатаСервер»",
+      "inn": "7736207543",
+      "kpp": "773601001",
+      "address": "119049, г. Москва, Ленинский пр-т, д. 2"
+    },
+    "contract_base": "Договор П-2024/11 от 10.02.2024",
+    "finances": {
+      "total_rub_no_vat": 2000000.0,
+      "total_vat_rub": 400000.0,
+      "total_rub": 2400000.0,
+      "currency": "Российский рубль, 643"
+    },
+    "items": [
+      {
+        "row_num": "1",
+        "name": "Серверный шкаф 42U",
+        "unit": "шт",
+        "quantity": 10.0,
+        "price": 200000.0,
+        "amount_no_vat": 2000000.0,
+        "vat_rate": "20%",
+        "vat_amount": 400000.0,
+        "total_amount": 2400000.0
+      }
+    ],
+    "has_signature_stamp": true
+  }
+]

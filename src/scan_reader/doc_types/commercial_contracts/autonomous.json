@@ -1,0 +1,22 @@
+{
+  "fields": [
+    {
+      "field": "doc_number",
+      "rule": "not_empty",
+      "severity": "CRITICAL",
+      "message": "Номер договора обязателен"
+    },
+    {
+      "field": "party_one.inn",
+      "rule": "valid_inn",
+      "severity": "CRITICAL",
+      "message": "ИНН стороны 1 обязателен"
+    },
+    {
+      "field": "party_two.inn",
+      "rule": "valid_inn",
+      "severity": "CRITICAL",
+      "message": "ИНН стороны 2 обязателен"
+    }
+  ]
+}

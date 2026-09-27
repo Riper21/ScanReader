@@ -1,0 +1,13 @@
+[
+  {"path": "doc_number", "label": "Номер акта", "kind": "text"},
+  {"path": "doc_date", "label": "Дата акта", "kind": "text"},
+  {"path": "contract_number", "label": "Договор-основание", "kind": "text"},
+  {"path": "contractor.name", "label": "Исполнитель/Подрядчик", "kind": "text"},
+  {"path": "contractor.inn", "label": "ИНН Исполнителя", "kind": "text"},
+  {"path": "customer.name", "label": "Заказчик", "kind": "text"},
+  {"path": "customer.inn", "label": "ИНН Заказчика", "kind": "text"},
+  {"path": "claim_subject", "label": "Содержание работ/услуг", "kind": "text"},
+  {"path": "finances.amount_no_vat_rub", "label": "Сумма без НДС", "kind": "number"},
+  {"path": "finances.vat_amount_rub", "label": "Сумма НДС", "kind": "number"},
+  {"path": "finances.total_rub", "label": "Всего с НДС (руб)", "kind": "number"}
+]
