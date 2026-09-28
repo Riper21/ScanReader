@@ -900,12 +900,15 @@ class LegalDocPlatformFacade:
 
         # 4. Zero-Trust Верификация (контрольные суммы, математика, хронология, кросс-модальный аудит)
         raw_text = self._extract_raw_text_for_audit(file_path)
+        gate_source: Optional[str] = "text_layer" if raw_text else None
         if not raw_text:
             # S-13: для сканов без текстового слоя — второй VLM-проход (точная транскрипция)
             # как эталон для кросс-модальной сверки реквизитов
             ext = os.path.splitext(file_path)[1].lower()
             if ext in SUPPORTED_IMAGE_EXTS or ext == ".pdf":
                 raw_text = self._transcribe_scan_for_audit(file_path)
+                if raw_text:
+                    gate_source = "vlm_transcription"
         # M-06: детекция низкого DPI скана для статуса ocr_low_confidence
         scan_dpi = None
         if os.path.splitext(file_path)[1].lower() in SUPPORTED_IMAGE_EXTS:
@@ -919,6 +922,8 @@ class LegalDocPlatformFacade:
             raw_ocr_text=raw_text,
             extraction_method=method if method == "regex_fallback" else "vlm",
             scan_dpi=scan_dpi,
+            gate_source=gate_source,
+            gate_expected=True,
         )
 
         # 5. Связность статусов (S-2): Guardrails / Quality / Zero-Trust образуют единый итог

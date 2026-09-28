@@ -295,6 +295,14 @@ class LegalExcelExporter:
                             cell.value = "✔ Zero-Trust"
                             cell.fill = fill_zt_green
                             cell.font = font_zt_green
+                        elif zt_str == "partially_verified":
+                            cell.value = "◐ Частично"
+                            cell.fill = fill_zt_yellow
+                            cell.font = font_zt_yellow
+                        elif zt_str == "gate_not_executed":
+                            cell.value = "⚠ Нет эталона"
+                            cell.fill = fill_zt_yellow
+                            cell.font = font_zt_yellow
                         elif zt_str == "discrepancy_detected":
                             cell.value = "✘ Расхождение"
                             cell.fill = fill_zt_red

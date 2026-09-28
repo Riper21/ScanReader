@@ -146,6 +146,9 @@ def handle_run(args: argparse.Namespace) -> int:
             zt_status = result.get("zero_trust_status")
             if zt_status == "discrepancy_detected":
                 return EXIT_DISCREPANCY
+            if zt_status == "gate_not_executed":
+                # Реквизиты не подтверждены исходным текстом: автоимпорт недопустим.
+                return EXIT_DISCREPANCY
             if zt_status == "heuristic_fallback":
                 return EXIT_FALLBACK
             return EXIT_OK
@@ -204,6 +207,9 @@ def handle_run(args: argparse.Namespace) -> int:
 
         zt_status = result.get("zero_trust_status")
         if zt_status == "discrepancy_detected":
+            return EXIT_DISCREPANCY
+        if zt_status == "gate_not_executed":
+            # Реквизиты не подтверждены исходным текстом: автоимпорт недопустим.
             return EXIT_DISCREPANCY
         if zt_status == "heuristic_fallback":
             return EXIT_FALLBACK

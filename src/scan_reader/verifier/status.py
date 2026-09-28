@@ -15,6 +15,8 @@ class VerificationStatus(str, Enum):
     Explicit status taxonomy for document verification.
     """
     ZERO_TRUST_VERIFIED = "zero_trust_verified"
+    PARTIALLY_VERIFIED = "partially_verified"
+    GATE_NOT_EXECUTED = "gate_not_executed"
     VLM_UNVERIFIED = "vlm_unverified"
     HEURISTIC_FALLBACK = "heuristic_fallback"
     DISCREPANCY_DETECTED = "discrepancy_detected"

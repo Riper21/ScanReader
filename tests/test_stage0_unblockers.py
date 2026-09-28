@@ -81,6 +81,8 @@ def test_b03_zero_trust_auditor_resilience():
             VerificationStatus.DISCREPANCY_DETECTED,
             VerificationStatus.VLM_UNVERIFIED,
             VerificationStatus.ZERO_TRUST_VERIFIED,
+            VerificationStatus.PARTIALLY_VERIFIED,
+            VerificationStatus.GATE_NOT_EXECUTED,
             VerificationStatus.HEURISTIC_FALLBACK,
         ), f"Unexpected status {report.status} on {name}"
 
