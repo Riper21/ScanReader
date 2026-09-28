@@ -305,12 +305,11 @@ def rebuild_registries_and_excel(facade: LegalDocPlatformFacade, exporter=None) 
             logger.debug(f"Пропущен некорректный JSON файл '{jf}': {e}")
 
     if loaded:
-        export_consolidated_registries(loaded, facade.results_dir)
+        saved = export_consolidated_registries(loaded, facade.results_dir)
         excel_path = exporter.export_results_to_excel(loaded)
         print(f"✅ Пересобрано {len(loaded)} записей:")
-        print("   • Registry_Full.json")
-        print("   • Registry_Flat.json")
-        print("   • all_documents_registry.json")
+        for reg_name in saved:
+            print(f"   • {reg_name}")
         print(f"   • {os.path.basename(excel_path)}")
         open_results_in_explorer(facade.results_dir)
     else:

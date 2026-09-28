@@ -38,9 +38,6 @@ def _count(path):
 
 REGISTRY_FILES = (
     "Registry_Full.json",
-    "all_documents_registry.json",
-    "salary_deductions_registry.json",
-    "Registry_Flat.json",
 )
 
 

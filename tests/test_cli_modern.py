@@ -132,8 +132,11 @@ def test_cli_export_subcommand(tmp_path, capsys):
     captured = capsys.readouterr()
     res = json.loads(captured.out.strip())
     assert res["records_count"] == 1
+    # 0.9.3: единственный JSON-реестр — Registry_Full.json (Excel отдельным файлом)
     assert "Registry_Full.json" in res["exported_files"]
-    assert "Registry_Flat.json" in res["exported_files"]
+    assert "Registry_Flat.json" not in res["exported_files"]
+    assert "all_documents_registry.json" not in res["exported_files"]
+    assert len(res["exported_files"]) == 2  # реестр + Excel
 
 
 def test_default_folders_incoming_and_output():

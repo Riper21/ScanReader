@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scan-reader"
-version = "0.9.2"
+version = "0.9.3"
 description = "AI legal document recognition, Zero-Trust verification, and 1C/Excel registry orchestration"
 readme = "README.md"
 authors = [{ name = "ScanReader Contributors" }]

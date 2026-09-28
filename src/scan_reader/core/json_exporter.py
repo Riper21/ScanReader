@@ -2,13 +2,17 @@
 """
 Модуль экспорта структурированных JSON реестров и атомарного чекпоинтинга для ScanReader.
 Обеспечивает:
-1. Сохранение индивидуальных JSON карточек документов ({file_stem}_{doc_type}.json)
-2. Формирование консолидированных JSON реестров по типам документов:
-   - documents_registry.json (Исполнительные листы)
-   - enforcement_orders_registry.json (Приказы и постановления ИП)
-   - salary_deductions_registry.json (Взыскания на зарплату)
-   - all_documents_registry.json (Единый сводный реестр всех обработанных документов)
-3. Атомарное инкрементальное сохранение чекпоинтов (.checkpoint_{doc_type}.json)
+1. Сохранение индивидуальных карточек документа строго в двух формах:
+   {file_stem}_Full.json (канонический результат с верификацией и метриками)
+   и {file_stem}_Flat.json (плоская запись для 1С).
+2. Консолидированный реестр Registry_Full.json — единый источник правды,
+   с которым сливаются одиночные прогоны (C-07) и из которого собирается Excel.
+3. Атомарное инкрементальное сохранение чекпоинтов (.checkpoint_{doc_type}.json).
+
+До 0.9.3 писались также {file_stem}_raw.json, {file_stem}_{doc_type}.json,
+1C_Импорт/{file_stem}_1c.json, реестры по типам, salary_deductions_registry_1c.json,
+all_documents_registry.json и Registry_Flat.json. Из них первые три были
+байт-в-байт копиями Full/Flat, остальные дублировали Registry_Full.
 """
 
 import os
@@ -23,15 +27,6 @@ from .utils import as_dict as _as_dict, get_logger, sanitize_filename
 from .io_utils import write_atomic
 
 logger = get_logger("json_exporter")
-
-REGISTRY_ALIASES = {
-    "executive_documents": ["documents_registry.json", "executive_documents_registry.json"],
-    "executive": ["documents_registry.json", "executive_documents_registry.json"],
-    "enforcement_orders": ["enforcement_orders_registry.json"],
-    "enforcement": ["enforcement_orders_registry.json"],
-    "salary_deductions": ["salary_deductions_registry.json"],
-    "salary": ["salary_deductions_registry.json"],
-}
 
 
 # as_dict импортируется из .utils как _as_dict (Фаза 8.6: было три копии).
@@ -308,22 +303,6 @@ def convert_salary_to_target_1c(doc_or_wrapper: Dict[str, Any], default_db_code:
     return apply_verification_to_flat(target_dict, doc_or_wrapper)
 
 
-def export_1c_target_json(documents: List[Dict[str, Any]], filepath: str, default_db_code: int = 10):
-    """Экспорт реестра документов в целевой формат JSON (массив для 1С / учетной системы)."""
-    os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
-    converted = [convert_salary_to_target_1c(d, default_db_code=default_db_code) for d in documents]
-    write_atomic(filepath, json.dumps(converted, ensure_ascii=False, indent=2))
-    logger.info(f"1C Целевой JSON реестр сохранен: {filepath}")
-
-
-def export_single_1c_target_json(doc: Dict[str, Any], filepath: str, default_db_code: int = 10):
-    """Экспорт одного документа в целевой плоский JSON-файл (для 1С / учетной системы)."""
-    os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
-    converted = convert_salary_to_target_1c(doc, default_db_code=default_db_code)
-    write_atomic(filepath, json.dumps(converted, ensure_ascii=False, indent=2))
-    logger.info(f"1C Целевой JSON документа сохранен: {filepath}")
-
-
 def normalize_doc_data(doc_item: Dict[str, Any]) -> Dict[str, Any]:
     """
     Приводит результат обработки к чистому словарю данных.
@@ -424,17 +403,17 @@ def convert_to_flat_1c(doc_item: Dict[str, Any], default_db_code: int = 10) -> D
 
 def save_single_document_json(doc_result: Dict[str, Any], output_dir: str) -> str:
     """
-    Сохраняет результаты обработки документа в два основных формата:
+    Сохраняет результат обработки документа строго в два файла:
     1. {file_stem}_Full.json — полный иерархический JSON (данные, Zero-Trust аудит, Guardrails, метрики).
     2. {file_stem}_Flat.json — плоский JSON для 1С (без вложенных структур, ISO-даты, числа).
-    
-    Для 100% обратной совместимости также поддерживаются легаси-псевдонимы:
-    {file_stem}_{doc_type}.json, {file_stem}_raw.json, 1C_Импорт/{file_stem}_1c.json.
+
+    Легаси-копии ({file_stem}_raw.json, {file_stem}_{doc_type}.json,
+    1C_Импорт/{file_stem}_1c.json) были байт-в-байт дубликатами Full/Flat
+    и в 0.9.3 не пишутся.
     """
     os.makedirs(output_dir, exist_ok=True)
     file_name = doc_result.get("file_name", "document")
     file_path = doc_result.get("file_path", "")
-    doc_type = doc_result.get("doc_type", "unknown")
     base_stem = sanitize_filename(Path(file_name).stem)
 
     # C-12: Защита от коллизий имен файлов (одинаковый stem при разных путях/файлах)
@@ -476,7 +455,6 @@ def save_single_document_json(doc_result: Dict[str, Any], output_dir: str) -> st
     full_path = os.path.join(output_dir, f"{stem}_Full.json")
     flat_path = os.path.join(output_dir, f"{stem}_Flat.json")
 
-    is_salary = doc_type in ("salary_deductions", "salary") or ("Bik" in doc_result and "DbCode" in doc_result)
     flat_data = convert_to_flat_1c(doc_result)
 
     # 1. Атомарное сохранение Full JSON (H-03)
@@ -491,35 +469,13 @@ def save_single_document_json(doc_result: Dict[str, Any], output_dir: str) -> st
     except Exception as e:
         logger.warning(f"Не удалось записать Flat JSON '{flat_path}': {e}")
 
-    # 3. Сохранение легаси-копий для совместимости (H-03)
-    legacy_type_path = os.path.join(output_dir, f"{stem}_{doc_type}.json")
-    try:
-        write_atomic(legacy_type_path, json.dumps(flat_data if is_salary else doc_result, ensure_ascii=False, indent=2))
-    except Exception as e:
-        logger.debug(f"Не удалось записать legacy JSON '{legacy_type_path}': {e}")
-
-    raw_path = os.path.join(output_dir, f"{stem}_raw.json")
-    try:
-        write_atomic(raw_path, json.dumps(doc_result, ensure_ascii=False, indent=2))
-    except Exception as e:
-        logger.debug(f"Не удалось записать raw JSON '{raw_path}': {e}")
-
-    if is_salary:
-        import_dir = os.path.join(output_dir, "1C_Импорт")
-        os.makedirs(import_dir, exist_ok=True)
-        import_path = os.path.join(import_dir, f"{stem}_1c.json")
-        try:
-            write_atomic(import_path, json.dumps(flat_data, ensure_ascii=False, indent=2))
-        except Exception as e:
-            logger.debug(f"Не удалось записать 1C import JSON '{import_path}': {e}")
-
     # Прикрепляем пути сохраненных файлов к объекту результата
     doc_result["saved_files"] = {
         "full": full_path,
         "flat": flat_path
     }
 
-    return legacy_type_path if is_salary else full_path
+    return full_path
 
 
 def save_checkpoint(docs: List[Dict[str, Any]], checkpoint_path: str):
@@ -635,14 +591,18 @@ def export_consolidated_registries(
     merge: bool = False,
 ) -> Dict[str, str]:
     """
-    Формирует консолидированные структурированные JSON-реестры с атомарной записью (H-03):
-    - documents_registry.json
-    - enforcement_orders_registry.json
-    - salary_deductions_registry.json
-    - salary_deductions_registry_1c.json (Целевой массив документов для 1С)
-    - all_documents_registry.json
-    Также сохраняет отдельные карточки в папку 1C_Импорт/ для зарплатных документов.
-    Возвращает словарь {имя_файла: абсолютный_путь}.
+    Формирует единый консолидированный реестр Registry_Full.json (H-03).
+
+    Реестр — источник правды для трёх потребителей: слияния одиночных
+    прогонов (C-07, merge=True), пересборки реестра командой export и Excel.
+    Хранит ИСХОДНЫЕ result-записи (data, верификация, метрики); плоские
+    записи для 1С — на уровне per-doc {stem}_Flat.json. Записи проходят
+    фильтрацию (C-08: провалы не попадают в реестр).
+
+    До 0.9.3 рядом писались реестры по типам (documents_registry.json и др.),
+    salary_deductions_registry_1c.json, all_documents_registry.json,
+    Registry_Flat.json и карточки 1C_Импорт/ — дубли Registry_Full и
+    плоских per-doc записей.
 
     :param merge: True — слить с уже накопленным реестром в results_dir вместо
         полной перезаписи (C-07). Используется в одиночной обработке документа.
@@ -668,65 +628,9 @@ def export_consolidated_registries(
         )
     ]
 
-    # 1. Группировка по типам документов
-    by_category: Dict[str, List[Dict[str, Any]]] = {}
-    all_clean_docs: List[Dict[str, Any]] = []
-
-    for item in results:
-        doc_type = item.get("doc_type", "unknown")
-        clean_doc = normalize_doc_data(item)
-        all_clean_docs.append(clean_doc)
-
-        if doc_type not in by_category:
-            by_category[doc_type] = []
-        by_category[doc_type].append(clean_doc)
-
-    # 2. Экспорт по категориям
-    for cat_id, cat_docs in by_category.items():
-        aliases = REGISTRY_ALIASES.get(cat_id, [f"{cat_id}_registry.json"])
-        for alias_name in aliases:
-            out_path = os.path.join(results_dir, alias_name)
-            try:
-                write_atomic(out_path, json.dumps(cat_docs, ensure_ascii=False, indent=2))
-                saved_files[alias_name] = out_path
-                logger.info(f"💾 Экспортирован JSON реестр '{alias_name}': {len(cat_docs)} записей.")
-            except Exception as e:
-                logger.warning(f"Не удалось записать реестр '{out_path}': {e}")
-
-        # Для постановлений о взыскании на зарплату дополнительно формируем целевой реестр 1С
-        if cat_id in ("salary_deductions", "salary"):
-            target_1c_registry = [convert_salary_to_target_1c(d) for d in cat_docs]
-            reg_1c_name = "salary_deductions_registry_1c.json"
-            reg_1c_path = os.path.join(results_dir, reg_1c_name)
-            try:
-                write_atomic(reg_1c_path, json.dumps(target_1c_registry, ensure_ascii=False, indent=2))
-                saved_files[reg_1c_name] = reg_1c_path
-                logger.info(f"💾 Экспортирован 1С целевой реестр '{reg_1c_name}': {len(target_1c_registry)} записей.")
-            except Exception as e:
-                logger.warning(f"Не удалось записать целевой 1С реестр '{reg_1c_path}': {e}")
-
-            # Индивидуальные JSON-файлы под каждый документ в папку 1C_Импорт
-            import_1c_dir = os.path.join(results_dir, "1C_Импорт")
-            os.makedirs(import_1c_dir, exist_ok=True)
-            for idx, doc in enumerate(cat_docs, 1):
-                raw_filename = doc.get("file_name") or f"doc_{idx}"
-                base_doc_name = sanitize_filename(Path(raw_filename).stem)
-                single_1c_path = os.path.join(import_1c_dir, f"{base_doc_name}_1c.json")
-                try:
-                    write_atomic(single_1c_path, json.dumps(convert_salary_to_target_1c(doc), ensure_ascii=False, indent=2))
-                except Exception as e:
-                    logger.debug(f"Не удалось записать 1С карточку '{single_1c_path}': {e}")
-
-    # 3. Единый сводный реестр всех документов
-    all_path = os.path.join(results_dir, "all_documents_registry.json")
-    try:
-        write_atomic(all_path, json.dumps(all_clean_docs, ensure_ascii=False, indent=2))
-        saved_files["all_documents_registry.json"] = all_path
-        logger.info(f"💾 Экспортирован единый сводный JSON реестр 'all_documents_registry.json': {len(all_clean_docs)} записей.")
-    except Exception as e:
-        logger.warning(f"Не удалось записать сводный реестр '{all_path}': {e}")
-
-    # 4. Реестры Full и Flat
+    # Реестр хранит ИСХОДНЫЕ result-записи (data, zero_trust, метрики): по этой
+    # схеме его читают merge (C-07), пересборка Excel и roundtrip-тесты.
+    # Нормализация для 1С происходит на уровне per-doc записей {stem}_Flat.json.
     registry_full_path = os.path.join(results_dir, "Registry_Full.json")
     try:
         write_atomic(registry_full_path, json.dumps(results, ensure_ascii=False, indent=2))
@@ -734,15 +638,6 @@ def export_consolidated_registries(
         logger.info(f"💾 Экспортирован сводный реестр 'Registry_Full.json': {len(results)} записей.")
     except Exception as e:
         logger.warning(f"Не удалось записать 'Registry_Full.json': {e}")
-
-    flat_list = [convert_to_flat_1c(item) for item in results]
-    registry_flat_path = os.path.join(results_dir, "Registry_Flat.json")
-    try:
-        write_atomic(registry_flat_path, json.dumps(flat_list, ensure_ascii=False, indent=2))
-        saved_files["Registry_Flat.json"] = registry_flat_path
-        logger.info(f"💾 Экспортирован сводный реестр 1С 'Registry_Flat.json': {len(flat_list)} записей.")
-    except Exception as e:
-        logger.warning(f"Не удалось записать 'Registry_Flat.json': {e}")
 
     return saved_files
 

@@ -13,7 +13,9 @@
   - {doc_type}_quality_metrics.json (детализация по категории)
   - metrics_history.json (накопительная история качества)
 - Markdown (.md) сводный отчет run_metrics_summary.md
-- Excel (.xlsx) сводный отчет run_metrics_summary.xlsx (при наличии openpyxl)
+
+Excel-сводка по документам формируется отдельно (excel_exporter,
+Сводный_реестр_документов.xlsx); отдельная xlsx-сводка метрик удалена в 0.9.3.
 """
 
 import os
@@ -32,13 +34,6 @@ from ..verifier.checksums import validate_inn
 from ..verifier.math_verifier import parse_percentage_value, verify_deduction_percentage
 
 logger = get_logger("core.metrics_evaluator")
-
-try:
-    import openpyxl
-    from openpyxl.styles import Font, PatternFill, Alignment
-    OPENPYXL_AVAILABLE = True
-except ImportError:
-    OPENPYXL_AVAILABLE = False
 
 
 # ==============================================================================
@@ -907,41 +902,7 @@ def export_run_summary_markdown(summary: Dict[str, Any], filepath: str):
     write_atomic(filepath, "\n".join(md))
 
 
-def export_run_summary_excel(summary: Dict[str, Any], filepath: str):
-    """Экспортирует стилизованную Excel-сводку о запуске."""
-    if not OPENPYXL_AVAILABLE:
-        return
-
-    dir_path = os.path.dirname(os.path.abspath(filepath))
-    os.makedirs(dir_path, exist_ok=True)
-
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Сводка запуска"
-
-    header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
-    header_fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")
-    center = Alignment(horizontal="center", vertical="center")
-
-    headers = ["Категория документов", "Количество", "Режим оценки", "Quality Score (%)", "🟢 Отлично", "🟡 Высокое", "🟠 Удовл.", "🔴 Внимание"]
-    ws.append(headers)
-    for col_idx in range(1, len(headers) + 1):
-        cell = ws.cell(row=1, column=col_idx)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = center
-
-    for cat_k, cat_v in summary.get("categories", {}).items():
-        st = cat_v.get("status_counts", {})
-        ws.append([
-            cat_k,
-            cat_v.get("total_documents", 0),
-            cat_v.get("mode", ""),
-            cat_v.get("average_quality_score_percent", 0.0),
-            st.get("excellent", 0),
-            st.get("high", 0),
-            st.get("satisfactory", 0),
-            st.get("needs_attention", 0)
-        ])
-
-    wb.save(filepath)
+# export_run_summary_excel удалён в 0.9.3: сводный Excel по типам документов
+# формирует LegalExcelExporter (Сводный_реестр_документов.xlsx), а отдельная
+# xlsx-сводка метрик была его дубликатом. Числа запуска живут в
+# run_metrics_summary.json/.md и metrics_history.json.

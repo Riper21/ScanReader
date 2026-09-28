@@ -5,16 +5,16 @@
 Проблема, закрытая здесь. normalize_doc_data переносил из результата
 обработки только file_name, file_path, doc_type, status, processed_at и
 quality_*. Поля zero_trust_status, zero_trust, errors и
-measurement_caveats в реестры НЕ попадали, поэтому:
+measurement_caveats в реестр и плоские записи НЕ попадали, поэтому:
 
-    salary_deductions_registry.json  ->  без следа о верификации
-    salary_deductions_registry_1c.json ->  ZeroTrustStatus = None
-    1C_Импорт/<файл>_1c.json        ->  ZeroTrustStatus = None
+    Registry_Full.json             ->  без следа о верификации
+    {файл}_Flat.json (запись 1С)   ->  ZeroTrustStatus = None
 
-Бухгалтер, загружающий реестр в 1С, видел status: COMPLETED и не мог
-отличить проверенный документ от непроверенного. Это особенно опасно для
-статуса gate_not_executed: кросс-модальная сверка не выполнялась вообще,
-то есть реквизиты не сопоставлялись с оригиналом ни разу.
+Бухгалтер, загружающий реестр или плоскую запись в 1С, видел status:
+COMPLETED и не мог отличить проверенный документ от непроверенного. Это
+особенно опасно для статуса gate_not_executed: кросс-модальная сверка
+не выполнялась вообще, то есть реквизиты не сопоставлялись с оригиналом
+ни разу.
 """
 
 from __future__ import annotations

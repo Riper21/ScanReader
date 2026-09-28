@@ -175,11 +175,14 @@ def _handle_run_directory(args: argparse.Namespace, scan_dir: Path) -> int:
         failed = sum(1 for r in results if r.get("status") == "FAILED")
         sys.stdout.write(
             f"Обработано документов: {len(results)} (сбоев: {failed}). "
-            f"Реестры: {os.path.abspath(output_dir)}\n"
+            f"Реестр: {os.path.abspath(output_dir)}\n"
         )
-        registry = os.path.join(output_dir, "all_documents_registry.json")
+        registry = os.path.join(output_dir, "Registry_Full.json")
         if os.path.exists(registry):
             sys.stdout.write(f"{os.path.abspath(registry)}\n")
+        excel = os.path.join(output_dir, "Сводный_реестр_документов.xlsx")
+        if os.path.exists(excel):
+            sys.stdout.write(f"{os.path.abspath(excel)}\n")
         sys.stdout.flush()
     else:
         sys.stderr.write(f"[ОШИБКА] Поддерживаемых документов не найдено: {scan_dir}\n")
@@ -208,14 +211,10 @@ def handle_run(args: argparse.Namespace) -> int:
             doc_type=doc_type_arg,
         )
 
-        detected_type = result.get("doc_type", "unknown")
         stem = sanitize_filename(scan_file.stem)
 
         full_json_path = os.path.join(output_dir, f"{stem}_Full.json")
         flat_json_path = os.path.join(output_dir, f"{stem}_Flat.json")
-        default_json_path = os.path.join(output_dir, f"{stem}_{detected_type}.json")
-        import_1c_path = os.path.join(output_dir, "1C_Импорт", f"{stem}_1c.json")
-        raw_json_path = os.path.join(output_dir, f"{stem}_raw.json")
 
         if getattr(args, "json_mode", False):
             _emit_json(result)
@@ -225,51 +224,28 @@ def handle_run(args: argparse.Namespace) -> int:
             if os.path.exists(flat_json_path):
                 with open(flat_json_path, "r", encoding="utf-8") as f:
                     sys.stdout.write(f.read() + "\n")
-            elif os.path.exists(import_1c_path):
-                with open(import_1c_path, "r", encoding="utf-8") as f:
-                    sys.stdout.write(f.read() + "\n")
-            elif os.path.exists(default_json_path):
-                with open(default_json_path, "r", encoding="utf-8") as f:
-                    sys.stdout.write(f.read() + "\n")
             else:
                 _emit_json(result)
 
         elif args.format == "flat":
-            if os.path.exists(flat_json_path):
-                sys.stdout.write(f"{os.path.abspath(flat_json_path)}\n")
-            elif os.path.exists(import_1c_path):
-                sys.stdout.write(f"{os.path.abspath(import_1c_path)}\n")
-            elif os.path.exists(default_json_path):
-                sys.stdout.write(f"{os.path.abspath(default_json_path)}\n")
-            else:
-                sys.stdout.write(f"{flat_json_path}\n")
+            sys.stdout.write(f"{os.path.abspath(flat_json_path)}\n")
 
         elif args.format == "full":
-            target = full_json_path if os.path.exists(full_json_path) else default_json_path
-            sys.stdout.write(f"{os.path.abspath(target)}\n")
+            sys.stdout.write(f"{os.path.abspath(full_json_path)}\n")
 
         elif args.format == "both":
-            f_target = full_json_path if os.path.exists(full_json_path) else default_json_path
-            fl_target = flat_json_path if os.path.exists(flat_json_path) else (import_1c_path if os.path.exists(import_1c_path) else default_json_path)
-            sys.stdout.write(f"{os.path.abspath(f_target)}\n{os.path.abspath(fl_target)}\n")
+            sys.stdout.write(f"{os.path.abspath(full_json_path)}\n{os.path.abspath(flat_json_path)}\n")
 
         elif args.format == "1c":
-            if os.path.exists(import_1c_path):
-                sys.stdout.write(f"{os.path.abspath(import_1c_path)}\n")
-            elif os.path.exists(flat_json_path):
-                sys.stdout.write(f"{os.path.abspath(flat_json_path)}\n")
-            elif os.path.exists(default_json_path):
-                sys.stdout.write(f"{os.path.abspath(default_json_path)}\n")
-            else:
-                sys.stdout.write(f"{default_json_path}\n")
+            # 0.9.3: папки 1C_Импорт больше нет; 1С читает плоскую запись.
+            sys.stdout.write(f"{os.path.abspath(flat_json_path)}\n")
 
         elif args.format == "raw":
-            target = raw_json_path if os.path.exists(raw_json_path) else default_json_path
-            sys.stdout.write(f"{os.path.abspath(target)}\n")
+            # 0.9.3: raw был байт-в-байт копией Full — оставлен синоним.
+            sys.stdout.write(f"{os.path.abspath(full_json_path)}\n")
 
         else:  # default
-            target = flat_json_path if os.path.exists(flat_json_path) else default_json_path
-            sys.stdout.write(f"{os.path.abspath(target)}\n")
+            sys.stdout.write(f"{os.path.abspath(flat_json_path)}\n")
 
         sys.stdout.flush()
         return _result_exit_code(result)
@@ -536,7 +512,9 @@ def build_parser() -> argparse.ArgumentParser:
         "-f", "--format",
         choices=["1c", "flat", "full", "both", "default", "raw", "stdout"],
         default="1c",
-        help="Формат вывода пути/данных в stdout (по умолчанию: 1c / flat, также: full, both, raw, stdout)"
+        help=("Формат вывода: '1c'/'flat' (путь к плоскому JSON для 1С), "
+              "'full'/'raw' (путь к _Full.json), 'both' (оба пути), "
+              "'stdout' (тело плоского JSON), 'default' (как '1c')"),
     )
     run_parser.add_argument(
         "-t", "--type",

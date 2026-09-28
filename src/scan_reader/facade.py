@@ -35,7 +35,6 @@ from .core.metrics_evaluator import (
     export_metrics_json,
     append_to_metrics_history,
     export_run_summary_markdown,
-    export_run_summary_excel,
     _get_nested,
     score_field,
 )
@@ -1317,7 +1316,6 @@ class LegalDocPlatformFacade:
             run_summary = generate_run_summary(all_category_metrics)
             export_metrics_json(run_summary, os.path.join(self.results_dir, "run_metrics_summary.json"))
             export_run_summary_markdown(run_summary, os.path.join(self.results_dir, "run_metrics_summary.md"))
-            export_run_summary_excel(run_summary, os.path.join(self.results_dir, "run_metrics_summary.xlsx"))
             append_to_metrics_history(run_summary, os.path.join(self.results_dir, "metrics_history.json"))
             print(f"\n  🏆 СВОДНЫЙ QUALITY SCORE ЗАПУСКА: {run_summary['overall_quality_score_percent']}%")
 

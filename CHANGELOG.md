@@ -6,6 +6,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.3] - 2026-09-29
+
+Thin output contract. **Breaking:** the 1C-import file layer is removed;
+per-plugin registries, `Registry_Flat.json`, `all_documents_registry.json`,
+`1C_Импорт/` cards, `{stem}_raw.json` and `{stem}_{doc_type}.json` are no
+longer written. A run now leaves exactly two files per document
+(`{stem}_Full.json`, `{stem}_Flat.json`), one consolidated registry
+(`Registry_Full.json`, raw records), the Excel block and the JSON/MD
+metrics.
+
+### Removed
+
+- Per-document byte-identical copies: `{stem}_raw.json` and
+  `{stem}_{doc_type}.json` duplicated `_Full.json` (or `_Flat.json` for
+  salary writs); `1C_Импорт/{stem}_1c.json` duplicated `_Flat.json` and was
+  written twice (single-run and batch). A 13-document cold run left 56
+  files, three of which were the same file.
+- Registry duplicates: `Registry_Flat.json`,
+  `all_documents_registry.json`, per-plugin registries including the
+  `documents_registry.json` alias (two files for one category), and
+  `salary_deductions_registry_1c.json` — all derived from the same
+  records as `Registry_Full.json` and the per-doc flat cards.
+- `run_metrics_summary.xlsx` — a duplicate of the Excel block; run numbers
+  live in `run_metrics_summary.json`/`.md` and `metrics_history.json`.
+- Dead exporters `export_1c_target_json` / `export_single_1c_target_json`
+  (no callers) and the `REGISTRY_ALIASES` table.
+
+### Changed
+
+- CLI `-f raw` is now a synonym of `full` (prints `{stem}_Full.json`);
+  `-f 1c`/`flat`/`default` print `{stem}_Flat.json`; `-f stdout` prints the
+  flat record body. `save_single_document_json` returns the `_Full.json`
+  path.
+- `Registry_Full.json` keeps storing raw result records (data,
+  verification, metrics) — the merge (C-07) and Excel rebuild read this
+  shape; 1C-flat normalization stays at the per-doc `{stem}_Flat.json`
+  level.
+- The MCP `export_results` tool now skips registry/flat/raw/metrics files
+  when collecting documents: previously one document was loaded three
+  times (Full + raw + type card) and the registries were re-fed into
+  themselves, inflating `records_count`.
+- The batch-directory CLI summary prints the `Registry_Full.json` and
+  Excel paths; the measurement harness C.5 probe reads
+  `Registry_Full.json` (fresh numbers in
+  `docs/measurements/risks-0.9.3.md`).
+
+### Compatibility notes
+
+- 1C batch feeds can be rebuilt from per-doc `{stem}_Flat.json` records if
+  needed; the standalone converter
+  (`py -3 -m scan_reader.core.json_exporter <in> <out>`) still produces
+  the target 1C array.
+- `export`/launcher rebuilds skip legacy files when re-scanning old
+  output directories.
+
+### Tests
+
+667 tests (was 660). Slim-output contract (exactly two files per card,
+one registry per batch, no 1C_Импорт, no metrics xlsx, MCP single-count),
+updated registry/CLI/format tests.
+
 ## [0.9.2] - 2026-09-29
 
 Cross-modal gate honesty on real Russian text: inflection and money formats.

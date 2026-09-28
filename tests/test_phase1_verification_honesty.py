@@ -359,12 +359,7 @@ def test_c08_failed_registry_filter_excludes_failed_records():
 
     saved = export_consolidated_registries([failed, marker, good], results_dir)
     try:
-        target = saved.get("salary_deductions_registry.json")
-        if target is None:
-            for name, path in saved.items():
-                if name.endswith("salary_deductions_registry.json"):
-                    target = path
-                    break
+        target = saved.get("Registry_Full.json")
         assert target is not None, f"registry not produced: {list(saved)}"
         with open(target, "r", encoding="utf-8") as fh:
             records = json.load(fh)

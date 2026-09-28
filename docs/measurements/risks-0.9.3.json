@@ -1,0 +1,155 @@
+{
+  "routing": {
+    "cases_total": 54,
+    "hits": 29,
+    "accuracy_percent": 53.7,
+    "no_rule_falls_to_vlm": 24,
+    "wrong_type": 1,
+    "examples_wrong": [
+      {
+        "expected": "invoices_upd",
+        "name": "Счет-фактура 2024.pdf",
+        "got": "acceptance_certificates"
+      }
+    ],
+    "examples_no_rule": [
+      {
+        "expected": "salary_deductions",
+        "name": "IMG_20240115_143022.jpg",
+        "got": ""
+      },
+      {
+        "expected": "salary_deductions",
+        "name": "Скан0001.pdf",
+        "got": ""
+      },
+      {
+        "expected": "salary_deductions",
+        "name": "постановление_об_удержании_из_зарплаты.pdf",
+        "got": ""
+      },
+      {
+        "expected": "salary_deductions",
+        "name": "ФССП_удержание_(1).pdf",
+        "got": ""
+      },
+      {
+        "expected": "salary_deductions",
+        "name": "постановление пристава 15.01.2024.pdf",
+        "got": ""
+      },
+      {
+        "expected": "enforcement_orders",
+        "name": "IMG_20301211_093311.jpg",
+        "got": ""
+      },
+      {
+        "expected": "enforcement_orders",
+        "name": "постановление о взыскании.docx",
+        "got": ""
+      },
+      {
+        "expected": "enforcement_orders",
+        "name": "ПРИКАЗ ФССП 2024.pdf",
+        "got": ""
+      }
+    ]
+  },
+  "gate": {
+    "clean_reference": {
+      "checked": 23,
+      "false_positive_percent": 0.0
+    },
+    "by_noise_rate": {
+      "0.00": {
+        "checked": 460,
+        "flagged": 0,
+        "statuses": {
+          "zero_trust_verified": 60,
+          "partially_verified": 260,
+          "vlm_unverified": 140
+        },
+        "false_positive_percent": 0.0,
+        "requires_review_percent": 0.0
+      },
+      "0.01": {
+        "checked": 460,
+        "flagged": 99,
+        "statuses": {
+          "zero_trust_verified": 45,
+          "discrepancy_detected": 99,
+          "partially_verified": 204,
+          "vlm_unverified": 112
+        },
+        "false_positive_percent": 21.5,
+        "requires_review_percent": 21.5
+      },
+      "0.02": {
+        "checked": 460,
+        "flagged": 177,
+        "statuses": {
+          "zero_trust_verified": 21,
+          "discrepancy_detected": 177,
+          "partially_verified": 166,
+          "vlm_unverified": 96
+        },
+        "false_positive_percent": 38.5,
+        "requires_review_percent": 38.5
+      },
+      "0.05": {
+        "checked": 460,
+        "flagged": 338,
+        "statuses": {
+          "zero_trust_verified": 5,
+          "discrepancy_detected": 338,
+          "partially_verified": 71,
+          "vlm_unverified": 46
+        },
+        "false_positive_percent": 73.5,
+        "requires_review_percent": 73.5
+      },
+      "0.10": {
+        "checked": 460,
+        "flagged": 410,
+        "statuses": {
+          "discrepancy_detected": 410,
+          "vlm_unverified": 16,
+          "partially_verified": 32,
+          "zero_trust_verified": 2
+        },
+        "false_positive_percent": 89.1,
+        "requires_review_percent": 89.1
+      }
+    }
+  },
+  "page_limit": [
+    {
+      "max_pages": 5,
+      "pages_in_document": 45,
+      "key_page": 31,
+      "pages_rendered": 5,
+      "key_page_reached": false
+    },
+    {
+      "max_pages": 20,
+      "pages_in_document": 45,
+      "key_page": 31,
+      "pages_rendered": 20,
+      "key_page_reached": false
+    },
+    {
+      "max_pages": "без ограничения",
+      "pages_in_document": 45,
+      "key_page": 31,
+      "pages_rendered": 45,
+      "key_page_reached": true
+    }
+  ],
+  "registry_io": {
+    "documents": 200,
+    "registry_size_bytes": 100954,
+    "single_mode_seconds": 1.899,
+    "batch_mode_seconds": 0.004,
+    "speedup": 448.5
+  }
+}

@@ -220,7 +220,7 @@ def measure_registry_io(documents: int = 200) -> Dict[str, Any]:
         for i in range(1, documents + 1):
             export_consolidated_registries([_record(i)], single_dir, merge=True)
         single_elapsed = time.perf_counter() - t0
-        registry = os.path.join(single_dir, "hr_orders_registry.json")
+        registry = os.path.join(single_dir, "Registry_Full.json")
         registry_bytes = os.path.getsize(registry)
 
         # Пакетный режим: одна запись в конце (текущее поведение)

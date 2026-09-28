@@ -74,23 +74,33 @@ def test_review_required_statuses_are_flagged(status):
 
 
 def test_verification_survives_registry_roundtrip(tmp_path):
-    """Статус должен быть в файле реестра, а не только в отчёте одиночного документа."""
-    export_consolidated_registries([_result("discrepancy_detected")], str(tmp_path), merge=True)
+    """Статус должен быть в файле реестра, а не только в отчёте одиночного документа.
 
-    with open(tmp_path / "salary_deductions_registry.json", encoding="utf-8") as fh:
+    Registry_Full хранит исходные result-записи: фасад всегда выставляет в них
+    zero_trust_status, zero_trust и requires_human_review — реестр не должен
+    их терять при слиянии (merge) и перезаписи.
+    """
+    rec = _result("discrepancy_detected")
+    rec["requires_human_review"] = True  # facade выставляет флаг в каждом результате
+    export_consolidated_registries([rec], str(tmp_path), merge=True)
+
+    with open(tmp_path / "Registry_Full.json", encoding="utf-8") as fh:
         records = json.load(fh)
     assert len(records) == 1
     assert records[0]["zero_trust_status"] == "discrepancy_detected"
     assert records[0]["requires_human_review"] is True
 
 
-def test_verification_survives_1c_registry(tmp_path):
-    export_consolidated_registries([_result("gate_not_executed")], str(tmp_path), merge=True)
+def test_verification_survives_flat_card(tmp_path):
+    """Плоская запись для 1С (per-doc _Flat.json) несёт признаки верификации."""
+    from scan_reader.core.json_exporter import save_single_document_json
 
-    with open(tmp_path / "salary_deductions_registry_1c.json", encoding="utf-8") as fh:
-        records = json.load(fh)
-    assert records[0]["ZeroTrustStatus"] == "gate_not_executed"
-    assert records[0]["RequiresHumanReview"] is True
+    save_single_document_json(_result("gate_not_executed"), str(tmp_path))
+
+    with open(tmp_path / "doc_Flat.json", encoding="utf-8") as fh:
+        record = json.load(fh)
+    assert record["ZeroTrustStatus"] == "gate_not_executed"
+    assert record["RequiresHumanReview"] is True
 
 
 def test_1c_record_never_claims_false_validity():
@@ -232,5 +242,5 @@ def test_registry_merge_still_prevents_truncation(tmp_path):
         export_consolidated_registries(
             [_result("zero_trust_verified", file_name=f"d{i}.pdf")], out, merge=True
         )
-    with open(os.path.join(out, "salary_deductions_registry.json"), encoding="utf-8") as fh:
+    with open(os.path.join(out, "Registry_Full.json"), encoding="utf-8") as fh:
         assert len(json.load(fh)) == 3

@@ -108,6 +108,7 @@ def test_json_exporter_single_and_checkpoint(tmp_path):
 
 
 def test_consolidated_registries_export(tmp_path):
+    """0.9.3: реестр один — Registry_Full.json, хранящий исходные записи."""
     out_dir = str(tmp_path / "results_cons")
     docs = [
         {
@@ -127,32 +128,23 @@ def test_consolidated_registries_export(tmp_path):
     ]
 
     saved = export_consolidated_registries(docs, out_dir)
-    assert "documents_registry.json" in saved
-    assert "salary_deductions_registry.json" in saved
-    assert "all_documents_registry.json" in saved
-    assert "Registry_Full.json" in saved
-    assert "Registry_Flat.json" in saved
+    assert set(saved) == {"Registry_Full.json"}
+    # Удалённые дубли больше не появляются
+    for gone in (
+        "Registry_Flat.json", "all_documents_registry.json",
+        "salary_deductions_registry.json", "documents_registry.json",
+        "salary_deductions_registry_1c.json",
+    ):
+        assert not os.path.exists(os.path.join(out_dir, gone)), gone
+    assert not os.path.exists(os.path.join(out_dir, "1C_Импорт"))
 
-    # Проверка содержимого all_documents_registry.json
-    all_path = saved["all_documents_registry.json"]
-    with open(all_path, "r", encoding="utf-8") as f:
-        all_docs = json.load(f)
-    assert len(all_docs) == 2
-    assert all_docs[0]["file_name"] == "exec_1.pdf"
-    assert all_docs[1]["file_name"] == "salary_1.pdf"
-
-    # Проверка содержимого Registry_Full.json и Registry_Flat.json
+    # Реестр хранит исходные записи с верификационными полями
     with open(saved["Registry_Full.json"], "r", encoding="utf-8") as f:
         full_reg = json.load(f)
     assert len(full_reg) == 2
-
-    with open(saved["Registry_Flat.json"], "r", encoding="utf-8") as f:
-        flat_reg = json.load(f)
-    assert len(flat_reg) == 2
-    # Все элементы flat_reg должны быть плоскими (без словарей внутри)
-    for entry in flat_reg:
-        for val in entry.values():
-            assert not isinstance(val, dict)
+    assert full_reg[0]["file_name"] == "exec_1.pdf"
+    assert full_reg[1]["file_name"] == "salary_1.pdf"
+    assert full_reg[0]["data"]["case_number"] == "А40-1/2021"
 
 
 def test_metrics_evaluator_autonomous_and_summary(tmp_path):
@@ -284,29 +276,31 @@ def test_salary_1c_target_conversion_and_export(tmp_path):
     assert res_1c["RospFullCode"] == "66050"
     assert res_1c["Uin"] == "32266050260610077000"
 
-    # Проверка сохранения одиночного документа
+    # Проверка сохранения одиночного документа: строго два файла карточки
     out_dir = str(tmp_path / "results_1c_test")
     doc_path = save_single_document_json(sample, out_dir)
+    assert doc_path.endswith("nmc5o05g_Full.json")
     assert os.path.exists(doc_path)
-    with open(doc_path, "r", encoding="utf-8") as f:
-        saved_data = json.load(f)
-    assert list(saved_data.keys()) == expected_keys
-    assert saved_data["Bik"] == "015004950"
 
-    # Проверка raw и 1C_Импорт
-    raw_path = os.path.join(out_dir, "nmc5o05g_raw.json")
-    import_path = os.path.join(out_dir, "1C_Импорт", "nmc5o05g_1c.json")
-    assert os.path.exists(raw_path)
-    assert os.path.exists(import_path)
+    flat_path = os.path.join(out_dir, "nmc5o05g_Flat.json")
+    with open(flat_path, "r", encoding="utf-8") as f:
+        flat_saved = json.load(f)
+    assert flat_saved["Bik"] == "015004950"
+
+    # 0.9.3: байтовые дубли карточки больше не пишутся
+    for gone in ("nmc5o05g_raw.json", "nmc5o05g_salary_deductions.json"):
+        assert not os.path.exists(os.path.join(out_dir, gone)), gone
+    assert not os.path.exists(os.path.join(out_dir, "1C_Импорт"))
+    files = {name for name in os.listdir(out_dir) if name.endswith(".json")}
+    assert files == {"nmc5o05g_Full.json", "nmc5o05g_Flat.json"}
 
     # Проверка консолидированного реестра
     saved_regs = export_consolidated_registries([sample], out_dir)
-    assert "salary_deductions_registry_1c.json" in saved_regs
-    reg_path = saved_regs["salary_deductions_registry_1c.json"]
-    with open(reg_path, "r", encoding="utf-8") as rf:
+    assert set(saved_regs) == {"Registry_Full.json"}
+    with open(saved_regs["Registry_Full.json"], "r", encoding="utf-8") as rf:
         reg_data = json.load(rf)
     assert len(reg_data) == 1
-    assert reg_data[0]["Bik"] == "015004950"
+    assert reg_data[0]["file_name"] == "nmc5o05g.pdf"
 
 
 def test_salary_1c_dates_not_duplicated_and_fallback_regex():

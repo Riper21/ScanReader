@@ -245,7 +245,21 @@ class ScanReaderMCPServer:
                 loaded = []
                 for jf in json_files:
                     base = os.path.basename(jf)
-                    if base.startswith("run_metrics") or base.startswith("benchmark_") or base.endswith("_quality_metrics.json"):
+                    # 0.9.3: без фильтра один документ грузился бы трижды
+                    # (Full + raw + карточка типа), а реестры и плоские записи
+                    # добавляли бы записи поверх собственных источников.
+                    if (
+                        base.startswith("run_metrics")
+                        or base.startswith("benchmark_")
+                        or base.startswith("Registry_")
+                        or base.startswith("all_documents")
+                        or base.endswith("_registry.json")
+                        or base.endswith("_registry_1c.json")
+                        or base.endswith("_Flat.json")
+                        or base.endswith("_raw.json")
+                        or base.endswith("_quality_metrics.json")
+                        or base == "metrics_history.json"
+                    ):
                         continue
                     try:
                         with open(jf, "r", encoding="utf-8") as f:
