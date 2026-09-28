@@ -7,7 +7,7 @@ chronology validation, and cross-modal hallucination gating.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .checksums import clean_digits, validate_bik, validate_inn, validate_ogrn, validate_snils, validate_bank_account
 from .chronology import verify_chronology, parse_flexible_date
@@ -45,6 +45,178 @@ def _first_present(source: Any, *keys: str) -> Any:
             continue
         return val
     return None
+
+
+def _to_number(val: Any) -> Optional[float]:
+    """
+    Приведение денежного значения к float с учётом обоих форматов разделителей.
+
+    VLM и форматы 1С отдают суммы как «1 234,56», «1234.56», «1,234.56» и как
+    числа. Прежняя замена str.replace(",", ".") ломала «1,234.56» (две точки)
+    и молча превращала значение в ошибку парсинга.
+    """
+    if val is None or isinstance(val, bool):
+        return None
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = re.sub(r"[^\d,.\-]", "", str(val))
+    if not s:
+        return None
+    has_comma, has_dot = "," in s, "." in s
+    if has_comma and has_dot:
+        # Разделитель дробной части — последний из присутствующих
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif has_comma:
+        # Одна запятая: дробная часть, если после неё 1-2 цифры, иначе разделитель тысяч
+        tail = s.split(",")[-1]
+        s = s.replace(",", ".") if len(tail) in (1, 2) else s.replace(",", "")
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+# C-04: декларативные правила сверки денежных сумм.
+# Слагаемые и итог описаны данными, а не ветвлением по коду: правило применяется к
+# любому документу, чей finances содержит соответствующие поля. Это же описание
+# переносится в doc_types/<id>/verification.json на шаге изоляции плагинов,
+# поэтому здесь не появляется новой захардкоженной логики.
+#
+# ПОРЯДОК ВАЖЕН: применяется ПЕРВОЕ подходящее правило, дальнейшие не
+# рассматриваются. Правила упорядочены от специфичных к общим, потому что наборы
+# слагаемых пересекаются: приказ ФССП содержит и main_debt_rub, и court_costs_rub,
+# и потому удовлетворяет и WRIT, и ENFORCEMENT. Без приоритета один и тот же
+# расхожий итог порождал бы две одинаковые ошибки.
+#
+# Правило срабатывает, только если присутствуют ИТОГ и не менее min_components
+# СЛАГАЕМЫХ. Пропущенные слагаемые считаются нулём — так ведёт себя юридически
+# корректный документ, где, например, «прочее» не заполнено.
+_RECONCILE_RULES: Tuple[Dict[str, Any], ...] = (
+    {
+        "code": "WRIT_MATH_DISCREPANCY",
+        "total": ("total_rub",),
+        "field": "finances.total_rub",
+        "doc_hint": "исполнительный лист / приказ ФССП",
+        # Покрывает и executive_documents (main_debt + interest_penalty + court_fee
+        # + other), и enforcement_orders (main_debt + court_costs): набор слагаемых
+        # приказов ФССП строго подмножество этого, поэтому отдельное правило для них
+        # было бы недостижимым - WRIT срабатывал бы первым.
+        "components": (
+            ("основной долг", ("main_debt_rub",)),
+            ("проценты и неустойка", ("interest_penalty_rub", "penalty_rub")),
+            ("судебные расходы", ("court_fee_rub", "court_costs_rub")),
+            ("прочее", ("other_rub",)),
+        ),
+        "min_components": 2,
+    },
+    {
+        "code": "UPD_MATH_DISCREPANCY",
+        "total": ("total_rub",),
+        "field": "finances.total_rub",
+        "doc_hint": "УПД / счет-фактура",
+        "components": (
+            ("сумма без НДС", ("total_rub_no_vat",)),
+            ("НДС", ("total_vat_rub",)),
+        ),
+        "min_components": 2,
+    },
+    {
+        "code": "ACCEPTANCE_MATH_DISCREPANCY",
+        "total": ("total_rub",),
+        "field": "finances.total_rub",
+        "doc_hint": "акт приемки",
+        "components": (
+            ("стоимость без НДС", ("amount_no_vat_rub",)),
+            ("НДС", ("vat_amount_rub",)),
+        ),
+        "min_components": 2,
+    },
+    {
+        "code": "CLAIM_MATH_DISCREPANCY",
+        "total": ("total_claim_rub",),
+        "field": "finances.total_claim_rub",
+        "doc_hint": "досудебная претензия",
+        "components": (
+            ("основной долг", ("principal_debt_rub",)),
+            ("неустойка", ("penalty_rub",)),
+            ("проценты по ст. 395 ГК", ("interest_rub",)),
+        ),
+        "min_components": 1,
+    },
+)
+
+_TOLERANCE_RUB = 0.05
+
+
+def _apply_reconcile_rules(
+    fin: Dict[str, Any],
+    issues: List[VerificationIssue],
+    details: Dict[str, Any],
+) -> None:
+    """Применяет _RECONCILE_RULES к блоку finances."""
+    for rule in _RECONCILE_RULES:
+        total_raw = _first_present(fin, *rule["total"])
+        if total_raw is None:
+            continue
+        total_val = _to_number(total_raw)
+        if total_val is None:
+            issues.append(
+                VerificationIssue(
+                    "error",
+                    rule["code"],
+                    f"Нечисловой итог в финансовом блоке ({rule['doc_hint']}): {total_raw!r}",
+                    rule["field"],
+                )
+            )
+            continue
+
+        present: List[Tuple[str, float]] = []
+        unparsable: List[str] = []
+        for label, keys in rule["components"]:
+            raw = _first_present(fin, *keys)
+            if raw is None:
+                continue
+            num = _to_number(raw)
+            if num is None:
+                unparsable.append(f"{label}={raw!r}")
+            else:
+                present.append((label, num))
+
+        if unparsable:
+            details["math_checked"] = True
+            details["math_verified_ok"] = False
+            issues.append(
+                VerificationIssue(
+                    "error",
+                    rule["code"],
+                    f"Нечисловые слагаемые ({rule['doc_hint']}): {', '.join(unparsable)}",
+                    rule["field"],
+                )
+            )
+            return
+
+        if len(present) < rule["min_components"]:
+            continue
+
+        details["math_checked"] = True
+        expected = round(sum(v for _, v in present), 2)
+        details["math_verified_ok"] = abs(expected - total_val) <= _TOLERANCE_RUB
+        if not details["math_verified_ok"]:
+            breakdown = " + ".join(f"{label} ({v:.2f})" for label, v in present)
+            issues.append(
+                VerificationIssue(
+                    "error",
+                    rule["code"],
+                    f"{breakdown} = {expected:.2f}, что не совпадает с итогом {total_val:.2f} "
+                    f"(расхождение {abs(expected - total_val):.2f} руб.) [{rule['doc_hint']}]",
+                    rule["field"],
+                )
+            )
+        # Правило сработало — дальнейшие не применяются (см. порядок _RECONCILE_RULES)
+        return
 
 
 class ZeroTrustAuditor:
@@ -381,69 +553,12 @@ class ZeroTrustAuditor:
             if not ok:
                 issues.append(VerificationIssue("error", "FINANCIAL_DISCREPANCY", msg, "finances.total_rub"))
 
-        # 2. Invoices & UPD: total_rub_no_vat + total_vat_rub == total_rub
-        total_no_vat = fin.get("total_rub_no_vat")
-        total_vat = fin.get("total_vat_rub")
-        if total is not None and total_no_vat is not None and total_vat is not None:
-            details["math_checked"] = True
-            try:
-                t_val = float(str(total).replace(" ", "").replace(",", "."))
-                nv_val = float(str(total_no_vat).replace(" ", "").replace(",", "."))
-                v_val = float(str(total_vat).replace(" ", "").replace(",", "."))
-                if abs((nv_val + v_val) - t_val) > 0.05:
-                    issues.append(
-                        VerificationIssue(
-                            "error",
-                            "UPD_MATH_DISCREPANCY",
-                            f"Сумма без НДС ({total_no_vat}) + НДС ({total_vat}) != Всего ({total})",
-                            "finances.total_rub",
-                        )
-                    )
-                else:
-                    details["math_verified_ok"] = True
-            except (ValueError, TypeError):
-                issues.append(
-                    VerificationIssue(
-                        "error",
-                        "UPD_MATH_DISCREPANCY",
-                        f"Нечисловые финансовые поля в УПД/Счете: всего={total}, без НДС={total_no_vat}, НДС={total_vat}",
-                        "finances.total_rub",
-                    )
-                )
-
-        # 3. Legal claims: principal_debt_rub + penalty_rub + interest_rub == total_claim_rub
-        p_debt = fin.get("principal_debt_rub")
-        claim_pen = fin.get("penalty_rub")
-        claim_int = fin.get("interest_rub")
-        claim_tot = fin.get("total_claim_rub")
-        if claim_tot is not None and p_debt is not None:
-            details["math_checked"] = True
-            try:
-                tot_val = float(str(claim_tot).replace(" ", "").replace(",", "."))
-                p_val = float(str(p_debt).replace(" ", "").replace(",", ".")) if p_debt else 0.0
-                pen_val = float(str(claim_pen).replace(" ", "").replace(",", ".")) if claim_pen else 0.0
-                int_val = float(str(claim_int).replace(" ", "").replace(",", ".")) if claim_int else 0.0
-                expected = p_val + pen_val + int_val
-                if abs(expected - tot_val) > 0.05:
-                    issues.append(
-                        VerificationIssue(
-                            "error",
-                            "CLAIM_MATH_DISCREPANCY",
-                            f"Основной долг ({p_debt}) + неустойка ({claim_pen or 0}) + проценты ({claim_int or 0}) != Сумма претензии ({claim_tot})",
-                            "finances.total_claim_rub",
-                        )
-                    )
-                else:
-                    details["math_verified_ok"] = True
-            except (ValueError, TypeError):
-                issues.append(
-                    VerificationIssue(
-                        "error",
-                        "CLAIM_MATH_DISCREPANCY",
-                        f"Нечисловые финансовые поля в претензии: долг={p_debt}, неустойка={claim_pen}, проценты={claim_int}, итого={claim_tot}",
-                        "finances.total_claim_rub",
-                    )
-                )
+        # 2. Декларативные сверки по типам документов (C-04).
+        # Раньше сверка существовала только для УПД и претензий, а по исполнительным
+        # листам, приказам ФССП и актам приемки суммы вообще не сверялись: реальные
+        # числа 157611.62 + 7004.39 + 60000.00 и подставные 999999 давали один и тот же
+        # результат zero_trust_verified с нулём замечаний.
+        _apply_reconcile_rules(fin, issues, details)
 
         # Deduction Percentage Check
         # C-05: 0% — значимое значение (долг погашен полностью), а не «процент не указан».

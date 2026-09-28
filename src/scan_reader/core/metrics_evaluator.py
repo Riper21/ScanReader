@@ -25,6 +25,9 @@ from typing import Dict, Any, List, Optional, Tuple
 
 from .utils import get_logger
 from .io_utils import write_atomic
+# C-06: контрольная сумма ИНН берётся из verifier, а не дублируется в core.
+# Пакет verifier зависит только от stdlib, поэтому циклического импорта нет.
+from ..verifier.checksums import validate_inn
 
 logger = get_logger("core.metrics_evaluator")
 
@@ -105,7 +108,15 @@ def numeric_proximity_score(pred: Optional[float], gt: Optional[float], toleranc
 # ==============================================================================
 
 def validate_inn_string(details_str: Optional[str]) -> Tuple[bool, Optional[str], float]:
-    """Проверяет наличие корректного ИНН (10 или 12 знаков) по контрольным разрядам ФНС."""
+    """
+    Проверяет наличие корректного ИНН (10 или 12 знаков) по контрольным разрядам ФНС.
+
+    C-06: контрольная сумма считается единственным источником правды —
+    verifier.checksums.validate_inn. Прежняя локальная копия алгоритма
+    возвращала (True, <первый найденный>, 85.0) даже когда контрольный разряд
+    НЕ совпадал, то есть заведомо невалидный ИНН получал 85 баллов и
+    is_valid=True, а результат шёл в итоговый Quality Score.
+    """
     if not details_str:
         return False, None, 0.0
     matches = re.findall(r"\b(\d{10}|\d{12})\b", str(details_str))
@@ -113,20 +124,11 @@ def validate_inn_string(details_str: Optional[str]) -> Tuple[bool, Optional[str]
         return False, None, 50.0  # Реквизиты есть, но без ИНН
 
     for inn in matches:
-        digits = [int(c) for c in inn]
-        if len(digits) == 10:
-            coeffs = [2, 4, 10, 3, 5, 9, 4, 6, 8]
-            chk = sum(d * c for d, c in zip(digits[:9], coeffs)) % 11 % 10
-            if chk == digits[9]:
-                return True, inn, 100.0
-        elif len(digits) == 12:
-            coeffs1 = [7, 2, 4, 10, 3, 5, 9, 4, 6, 8]
-            chk1 = sum(d * c for d, c in zip(digits[:10], coeffs1)) % 11 % 10
-            coeffs2 = [3, 7, 2, 4, 10, 3, 5, 9, 4, 6, 8]
-            chk2 = sum(d * c for d, c in zip(digits[:11], coeffs2)) % 11 % 10
-            if chk1 == digits[10] and chk2 == digits[11]:
-                return True, inn, 100.0
-    return True, matches[0], 85.0
+        ok, _msg = validate_inn(inn)
+        if ok:
+            return True, inn, 100.0
+    # Найдены похожие на ИНН числа, но ни одно не проходит контрольный разряд.
+    return False, matches[0], 0.0
 
 
 def validate_case_number_format(case_num: Optional[str]) -> Tuple[bool, float]:
@@ -158,16 +160,42 @@ def validate_ip_number_format(ip_num: Optional[str]) -> Tuple[bool, float]:
     return False, 30.0
 
 
+_MONTH_NAMES = (
+    "январ", "феврал", "март", "апрел",
+    "ма", "июн", "июл", "август",
+    "сентябр", "октябр", "ноябр", "декабр",
+)
+
+
 def validate_date_string(date_str: Optional[str]) -> Tuple[bool, float]:
-    """Проверяет дату на соответствие формату ДД.ММ.ГГГГ."""
+    """
+    Проверяет дату на соответствие формату.
+
+    Принимаются ДД.ММ.ГГГГ, ДД/ММ/ГГГГ, ISO ГГГГ-ММ-ДД и словесные формы
+    («15 марта 2021»). До исправления ISO-дата не проходила: якорь \\b перед
+    однозначным днём не мог начать матч внутри «2021-03-15», а словесной ветке
+    месяц был недоступен при отсутствии букв.
+
+    C-06: месяц «мая» раньше проверялся подстрокой "ма", что совпадало с любым
+    словом, содержащим «ма» — «сумма», «компания», «норма», «власть».
+    """
     if not date_str:
         return False, 0.0
     d_str = str(date_str).strip()
-    m = re.search(r"\b(\d{1,2})[\.\/\-](\d{1,2})[\.\/\-](\d{2,4})\b", d_str)
+    # ISO: ГГГГ-ММ-ДД
+    if re.match(r"^\d{4}-\d{2}-\d{2}([T ]|$)", d_str):
+        return True, 100.0
+    # ДД.ММ.ГГГГ / ДД/ММ/ГГГГ / ДД-ММ-ГГ
+    m = re.search(r"(?<!\d)(\d{1,2})[\.\/\-](\d{1,2})[\.\/\-](\d{2,4})(?!\d)", d_str)
     if m:
         return True, 100.0
-    for month in ["январ", "феврал", "март", "апрел", "ма", "июн", "июл", "август", "сентябр", "октябр", "ноябр", "декабр"]:
-        if month in d_str.lower():
+    lowered = d_str.lower()
+    for month in _MONTH_NAMES:
+        # «ма» требует либо начало слова/разделитель, либо окончание «мая»/«мае»
+        if month == "ма":
+            if re.search(r"(?<![\w])ма(?:я|е|й|ю)?\b", lowered):
+                return True, 95.0
+        elif re.search(rf"{month}\w*\b", lowered):
             return True, 95.0
     return False, 20.0
 
