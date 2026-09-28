@@ -74,6 +74,26 @@ from .core.document_loader import load_document, SUPPORTED_TEXT_EXTS, SUPPORTED_
 from .verifier.auditor import ZeroTrustAuditor
 from .verifier.chronology import parse_flexible_date
 from .verifier.checksums import validate_inn
+from .verifier.status import VerificationIssue, VerificationReport, VerificationStatus
+from .core.io_utils import mask_secret
+
+
+def _extraction_failed(base_name: str, reason: str) -> Dict[str, Any]:
+    """
+    C-08: канонический payload отказа экстракции.
+
+    Раньше отказ возвращался как {'status': 'FAILED'} ВНУТРИ данных, а внешний
+    статус вычислялся только по типу документа, поэтому нераспознанный документ
+    попадал в реестры 1С/Excel со статусом COMPLETED.
+    Маркер _extraction_failed читается в process_single_document, который
+    выставляет status=FAILED и прерывает Guardrails/метрики.
+    """
+    return {
+        "file_name": base_name,
+        "error": reason,
+        "status": "FAILED",
+        "_extraction_failed": True,
+    }
 
 logger = get_logger("facade")
 
@@ -514,15 +534,22 @@ class LegalDocPlatformFacade:
         client = self._get_client()
         if not client:
             logger.error("LLM клиент недоступен. Возврат пустой структуры.")
-            return {"file_name": base_name, "error": "LLM client unavailable", "status": "FAILED"}
+            return _extraction_failed(base_name, "LLM client unavailable")
 
         start_time = time.perf_counter()
-        with self.rate_limiter:
-            response = client.chat.completions.create(
-                model=self.model_name,
-                messages=messages,
-                temperature=0.0
-            )
+        try:
+            with self.rate_limiter:
+                response = client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    temperature=0.0
+                )
+        except Exception as e:
+            # Раньше сетевой сбой/таймаут VLM пробрасывался наружу и убивал весь
+            # process_single_document; в батче его спасал внешний обработчик,
+            # в одиночном режиме (CLI/MCP) команда падала без диагностики.
+            logger.error(f"Сбой вызова VLM при экстракции '{base_name}': {mask_secret(str(e))}")
+            return _extraction_failed(base_name, f"VLM call failed: {e}")
 
         latency_sec = time.perf_counter() - start_time
         reply_text = response.choices[0].message.content or ""
@@ -878,8 +905,16 @@ class LegalDocPlatformFacade:
         # 2. Specialized Extraction Branch (Извлечение через ветку)
         extracted = self.extract_document_data(file_path, doc_type=doc_type)
 
+        # C-08: отказ экстракции не должен измеряться и попадать в реестры 1С/Excel.
+        extraction_failed = bool(isinstance(extracted, dict) and extracted.get("_extraction_failed"))
+        if extraction_failed:
+            failure_reason = str(extracted.get("error", "extraction failed"))
+
         # 3. Валидация Guardrails и расчет Quality Score (%)
-        validation = self.validate_document(extracted, doc_type=doc_type)
+        if extraction_failed:
+            validation = {"passed": False, "score": 0.0, "errors": [failure_reason], "rules_total": 0, "rules_passed": 0}
+        else:
+            validation = self.validate_document(extracted, doc_type=doc_type)
 
         # Загрузка ground truth при наличии для бенчмарка
         gt_data = None
@@ -893,10 +928,15 @@ class LegalDocPlatformFacade:
                 except Exception:
                     gt_data = None
 
-        eval_report = evaluate_dataset([{"data": extracted, "file_name": base_name}], gt_data, doc_type=doc_type)
-        doc_eval = eval_report["documents"][0] if eval_report.get("documents") else {}
-        quality_score = doc_eval.get("overall_score", validation.get("score", 100.0))
-        quality_status = doc_eval.get("status", "excellent")
+        if extraction_failed:
+            doc_eval: Dict[str, Any] = {"overall_score": 0.0, "status": "failed", "field_scores": {}}
+            quality_score = 0.0
+            quality_status = "failed"
+        else:
+            eval_report = evaluate_dataset([{"data": extracted, "file_name": base_name}], gt_data, doc_type=doc_type)
+            doc_eval = eval_report["documents"][0] if eval_report.get("documents") else {}
+            quality_score = doc_eval.get("overall_score", validation.get("score", 100.0))
+            quality_status = doc_eval.get("status", "excellent")
 
         # 4. Zero-Trust Верификация (контрольные суммы, математика, хронология, кросс-модальный аудит)
         raw_text = self._extract_raw_text_for_audit(file_path)
@@ -916,20 +956,46 @@ class LegalDocPlatformFacade:
                 scan_dpi = self.processor.get_image_dpi(file_path)
             except Exception as e:
                 logger.debug(f"DPI скана не определен для '{base_name}': {e}")
-        zt_report = self.auditor.audit_document(
-            data=extracted,
-            doc_type=doc_type,
-            raw_ocr_text=raw_text,
-            extraction_method=method if method == "regex_fallback" else "vlm",
-            scan_dpi=scan_dpi,
-            gate_source=gate_source,
-            gate_expected=True,
-        )
+        if extraction_failed:
+            # Аудировать payload-отказ бессмысленно: полей нет, сверять нечего.
+            zt_report = VerificationReport(
+                status=VerificationStatus.VLM_UNVERIFIED,
+                is_valid=False,
+                issues=[
+                    VerificationIssue(
+                        "error",
+                        "EXTRACTION_FAILED",
+                        failure_reason,
+                        "pipeline",
+                    )
+                ],
+                details={"gate_executed": False, "gate_expected": True, "extraction_failed": True},
+            )
+        else:
+            zt_report = self.auditor.audit_document(
+                data=extracted,
+                doc_type=doc_type,
+                raw_ocr_text=raw_text,
+                extraction_method=method if method == "regex_fallback" else "vlm",
+                scan_dpi=scan_dpi,
+                gate_source=gate_source,
+                gate_expected=True,
+            )
 
         # 5. Связность статусов (S-2): Guardrails / Quality / Zero-Trust образуют единый итог
         validation, quality_score, quality_status = self._combine_quality_and_validation(
             validation, quality_score, quality_status, zt_report
         )
+
+        # C-08: статус выводится из фактического результата экстракции, а не только
+        # из типа документа. Раньше нераспознанный документ писался в реестры 1С/Excel
+        # со статусом COMPLETED, потому что фильтр реестра смотрел на "data" в payload.
+        if extraction_failed:
+            doc_status = "FAILED"
+        elif doc_type == UNKNOWN_CATEGORY:
+            doc_status = "NEEDS_REVIEW"
+        else:
+            doc_status = "COMPLETED"
 
         result = {
             "file_name": base_name,
@@ -945,7 +1011,8 @@ class LegalDocPlatformFacade:
             "quality_score_percent": quality_score,
             "quality_status": quality_status,
             "metrics": doc_eval,
-            "status": "COMPLETED" if doc_type != UNKNOWN_CATEGORY else "NEEDS_REVIEW",
+            "status": doc_status,
+            "errors": [failure_reason] if extraction_failed else [],
             "processed_at": time.strftime("%Y-%m-%d %H:%M:%S")
         }
 

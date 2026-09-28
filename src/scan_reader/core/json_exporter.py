@@ -561,8 +561,13 @@ def export_consolidated_registries(
     all_clean_docs: List[Dict[str, Any]] = []
 
     for item in results:
-        # Пропускаем сбойные записи со статусом FAILED
-        if item.get("status") == "FAILED" and "data" not in item:
+        # C-08: сбойные записи исключаются БЕЗУСЛОВНО. Условие `and "data" not in item`
+        # делало фильтр холостым для любой записи, у которой ключ "data" присутствует,
+        # а в него как раз и клался payload-отказ экстракции.
+        if item.get("status") == "FAILED":
+            continue
+        data_block = item.get("data")
+        if isinstance(data_block, dict) and data_block.get("_extraction_failed"):
             continue
 
         doc_type = item.get("doc_type", "unknown")
