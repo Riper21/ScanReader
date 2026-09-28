@@ -2,13 +2,12 @@
 from typing import Optional, Any
 from pydantic import BaseModel, Field, field_validator
 from scan_reader.core.finance_parser import parse_russian_currency
+from scan_reader.core.fields import ValidatedPartyMixin
 from scan_reader.core.utils import coerce_to_str
 
 
-class CertificateParty(BaseModel):
+class CertificateParty(ValidatedPartyMixin):
     name: str = Field(default="", description="Наименование организации или ФИО контрагента")
-    inn: str = Field(default="", description="ИНН (10 или 12 цифр)")
-    kpp: str = Field(default="", description="КПП организации (9 цифр)")
     address: str = Field(default="", description="Адрес стороны")
 
     @field_validator("name", "inn", "kpp", "address", mode="before")
@@ -18,10 +17,12 @@ class CertificateParty(BaseModel):
 
 
 class CertificateFinances(BaseModel):
-    amount_no_vat_rub: Optional[float] = Field(default=None, description="Стоимость работ/услуг без НДС (руб)")
+
+
+    amount_no_vat_rub: Optional[float] = Field(ge=0, default=None, description="Стоимость работ/услуг без НДС (руб)")
     vat_rate: str = Field(default="20%", description="Ставка НДС (20%, 10%, 0%, без НДС)")
-    vat_amount_rub: Optional[float] = Field(default=None, description="Сумма НДС (руб)")
-    total_rub: Optional[float] = Field(default=None, description="Всего стоимость работ/услуг с НДС (руб)")
+    vat_amount_rub: Optional[float] = Field(ge=0, default=None, description="Сумма НДС (руб)")
+    total_rub: Optional[float] = Field(ge=0, default=None, description="Всего стоимость работ/услуг с НДС (руб)")
     currency: str = Field(default="RUB", description="Валюта документа")
 
     @field_validator("amount_no_vat_rub", "vat_amount_rub", "total_rub", mode="before")
@@ -36,6 +37,7 @@ class CertificateFinances(BaseModel):
 
 
 class AcceptanceCertificateDoc(BaseModel):
+    __test__ = False
     doc_number: str = Field(default="", description="Номер акта сдачи-приемки")
     doc_date: str = Field(default="", description="Дата составления акта (DD.MM.YYYY)")
     contract_number: str = Field(default="", description="Номер договора-основания")

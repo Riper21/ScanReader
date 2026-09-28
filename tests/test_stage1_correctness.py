@@ -43,17 +43,34 @@ def test_c01_currency_rub_kop_scale():
 
 
 def test_c02_currency_rejects_inn_and_negative():
-    """C-02: INN or naked long numbers and negative numbers must not be parsed as valid amounts."""
-    # Naked INN with or without prefix
+    """C-02: ИНН и голые длинные числа не должны разбираться как суммы."""
+    # Голый ИНН с префиксом и без
     assert parse_russian_currency("ИНН 7707083893") is None
     assert parse_russian_currency("7707083893") is None
     assert parse_russian_currency("КПП 770701001") is None
-    # Negative numbers must be rejected
-    assert parse_russian_currency("-500") is None
-    assert parse_russian_currency("-100.50 руб.") is None
-    # Valid currency string with symbol or word should parse
+    # Фаза 6.2: знак минус СОХРАНЯЕТСЯ, чтобы ограничение ge=0 схемы сработало.
+    # Прежде значение превращалось в None, и отрицательная сумма была
+    # неотличима от незаполненного поля, то есть терялась молча.
+    assert parse_russian_currency("-500") == -500.0
+    assert parse_russian_currency("-100.50 руб.") == -100.5
+    # Действительные суммы разбираются
     assert parse_russian_currency("5000 руб.") == 5000.0
     assert parse_russian_currency("250.75 ₽") == 250.75
+
+
+def test_c02_negative_amount_is_rejected_by_schema_not_dropped():
+    """Отрицательная сумма обязана быть отвергнута с понятным сообщением."""
+    from scan_reader.type_registry import get_registry
+
+    plugin = get_registry().get("salary_deductions")
+    finances = plugin.schema_cls.model_fields["finances"].annotation
+    model = finances if hasattr(finances, "model_fields") else None
+    if model is None:
+        import typing
+
+        model = typing.get_args(finances)[0]
+    with pytest.raises(ValueError):
+        model(debt_amount_rub=-500.0)
 
 
 def test_c03_all_plugins_benchmark_config_paths():

@@ -2,14 +2,13 @@
 from typing import Optional, Any
 from pydantic import BaseModel, Field, field_validator
 from scan_reader.core.finance_parser import parse_russian_currency
+from scan_reader.core.fields import ValidatedPartyMixin
 from scan_reader.core.utils import coerce_to_str
 
 
-class PartyInfo(BaseModel):
+class PartyInfo(ValidatedPartyMixin):
     name: str = Field(default="", description="Наименование организации или ФИО контрагента")
     role: str = Field(default="", description="Роль стороны (Заказчик, Исполнитель, Поставщик, Покупатель, Арендатор и др.)")
-    inn: str = Field(default="", description="ИНН контрагента (10 или 12 цифр)")
-    kpp: str = Field(default="", description="КПП организации (9 цифр)")
     ogrn: str = Field(default="", description="ОГРН / ОГРНИП")
     signatory_fio: str = Field(default="", description="ФИО уполномоченного лица / подписанта")
     signatory_basis: str = Field(default="", description="Основание полномочий (Устав, Доверенность №...)")
@@ -21,10 +20,12 @@ class PartyInfo(BaseModel):
 
 
 class ContractFinances(BaseModel):
-    total_rub: Optional[float] = Field(default=None, description="Общая цена/сумма договора (руб)")
+
+
+    total_rub: Optional[float] = Field(ge=0, default=None, description="Общая цена/сумма договора (руб)")
     vat_included: Optional[bool] = Field(default=None, description="Включен ли НДС в сумму (true/false)")
     vat_rate: str = Field(default="", description="Ставка НДС (20%, 10%, 0%, Без НДС)")
-    vat_amount_rub: Optional[float] = Field(default=None, description="Сумма НДС (руб)")
+    vat_amount_rub: Optional[float] = Field(ge=0, default=None, description="Сумма НДС (руб)")
     currency: str = Field(default="RUB", description="Валюта договора")
 
     @field_validator("total_rub", "vat_amount_rub", mode="before")
@@ -39,6 +40,7 @@ class ContractFinances(BaseModel):
 
 
 class CommercialContractDoc(BaseModel):
+    __test__ = False
     doc_number: str = Field(default="", description="Номер договора")
     doc_date: str = Field(default="", description="Дата заключения договора (DD.MM.YYYY)")
     city: str = Field(default="", description="Город / место заключения")

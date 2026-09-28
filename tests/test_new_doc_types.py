@@ -72,7 +72,7 @@ def test_commercial_contract_schema_validation():
         "party_one": {
             "name": "ООО «Северный Альянс»",
             "role": "Покупатель",
-            "inn": "7801234567",
+            "inn": "7802312751",
             "kpp": "780101001",
             "ogrn": "1037800012345",
             "signatory_fio": "Смирнов А.В.",
@@ -81,7 +81,7 @@ def test_commercial_contract_schema_validation():
         "party_two": {
             "name": "АО «ПромПоставка»",
             "role": "Поставщик",
-            "inn": "7705123456",
+            "inn": "7736207543",
             "kpp": "770501001",
             "ogrn": "1027700543210",
             "signatory_fio": "Кузнецов И.П.",
@@ -99,7 +99,7 @@ def test_commercial_contract_schema_validation():
     }
     doc = CommercialContractDoc(**raw_data)
     assert doc.doc_number == "Д-105/24"
-    assert doc.party_one.inn == "7801234567"
+    assert doc.party_one.inn == "7802312751"
     assert doc.finances.total_rub == pytest.approx(1500000.50)
     assert doc.finances.vat_amount_rub == pytest.approx(250000.08)
 
@@ -111,13 +111,13 @@ def test_invoice_upd_schema_validation():
         "status": 1,
         "seller": {
             "name": "ООО «Торговый Дом»",
-            "inn": "7711223344",
+            "inn": "7707083893",
             "kpp": "771101001",
             "address": "г. Москва, ул. Ленина, д. 5"
         },
         "buyer": {
             "name": "ИП Сидоров В.В.",
-            "inn": "771234567890",
+            "inn": "500100732259",
             "kpp": "",
             "address": "г. Москва, ул. Мира, д. 12"
         },
@@ -152,8 +152,8 @@ def test_acceptance_certificate_schema_validation():
     raw_data = {
         "doc_number": "А-45",
         "doc_date": "30.06.2024",
-        "customer": {"name": "ООО «Клиент»", "inn": "7701112233"},
-        "contractor": {"name": "ООО «Подрядчик»", "inn": "7702223344"},
+        "customer": {"name": "ООО «Клиент»", "inn": "7707083893"},
+        "contractor": {"name": "ООО «Подрядчик»", "inn": "7736207543"},
         "contract_number": "12-ПР",
         "contract_date": "10.01.2024",
         "finances": {
@@ -177,7 +177,7 @@ def test_power_of_attorney_schema_validation():
         "valid_until": "01.06.2025",
         "principal": {
             "name": "ООО «ГлавХолдинг»",
-            "inn": "7709998877",
+            "inn": "7802312751",
             "signatory_fio": "Сергеев С.С.",
             "signatory_position": "Генеральный директор"
         },
@@ -193,7 +193,7 @@ def test_power_of_attorney_schema_validation():
     }
     doc = PowerOfAttorneyDoc(**raw_data)
     assert doc.doc_number == "ДОВ-01"
-    assert doc.principal.inn == "7709998877"
+    assert doc.principal.inn == "7802312751"
     assert doc.agent.passport_series == "4512"
     assert doc.can_subdelegate is False
 
@@ -202,8 +202,8 @@ def test_legal_claim_schema_validation():
     raw_data = {
         "doc_number": "ПРЕТ-2024/7",
         "doc_date": "15.07.2024",
-        "sender": {"name": "ООО «Взыскатель»", "inn": "7701445566"},
-        "recipient": {"name": "ООО «Должник»", "inn": "7702778899"},
+        "sender": {"name": "ООО «Взыскатель»", "inn": "7707083893"},
+        "recipient": {"name": "ООО «Должник»", "inn": "7736207543"},
         "contract_basis_number": "ДОГ-88",
         "contract_basis_date": "01.02.2024",
         "finances": {
@@ -227,7 +227,7 @@ def test_hr_order_schema_validation():
         "form_code": "Т-1",
         "order_type": "Прием на работу",
         "organization_name": "ООО «ТехСтрой»",
-        "organization_inn": "7703332211",
+        "organization_inn": "7802312751",
         "employee": {
             "full_name": "Николаев Денис Юрьевич",
             "personnel_number": "00452",

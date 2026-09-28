@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 from typing import Any
 from pydantic import BaseModel, Field, field_validator
+from scan_reader.core.fields import ValidatedPartyMixin
 from scan_reader.core.utils import coerce_to_str
 
 
-class PrincipalInfo(BaseModel):
+class PrincipalInfo(ValidatedPartyMixin):
     name: str = Field(default="", description="Наименование организации-доверителя или ФИО")
-    inn: str = Field(default="", description="ИНН доверителя (10 или 12 цифр)")
-    kpp: str = Field(default="", description="КПП организации")
     ogrn: str = Field(default="", description="ОГРН / ОГРНИП")
     legal_address: str = Field(default="", description="Юридический адрес")
     signatory_fio: str = Field(default="", description="ФИО лица, выдавшего доверенность")
@@ -20,7 +19,7 @@ class PrincipalInfo(BaseModel):
         return coerce_to_str(v)
 
 
-class AttorneyAgentInfo(BaseModel):
+class AttorneyAgentInfo(ValidatedPartyMixin):
     full_name: str = Field(default="", description="ФИО уполномоченного представителя (поверенного)")
     passport_series: str = Field(default="", description="Серия паспорта")
     passport_number: str = Field(default="", description="Номер паспорта")
@@ -37,6 +36,9 @@ class AttorneyAgentInfo(BaseModel):
 
 
 class PowerOfAttorneyDoc(BaseModel):
+
+
+    __test__ = False
     doc_number: str = Field(default="", description="Номер доверенности")
     issue_date: str = Field(default="", description="Дата выдачи доверенности (DD.MM.YYYY)")
     city: str = Field(default="", description="Город / место выдачи")

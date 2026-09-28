@@ -2,10 +2,13 @@
 from typing import Optional, Any
 from pydantic import BaseModel, Field, field_validator
 from scan_reader.core.finance_parser import parse_russian_currency
+from scan_reader.core.fields import ValidatedPartyMixin
 from scan_reader.core.utils import coerce_to_str, normalize_ip_number
 
 
 class FsspInfo(BaseModel):
+
+
     name: str = Field(default="", description="Наименование подразделения ФССП/РОСП")
     region: str = Field(default="", description="Регион / город подразделения ФССП")
     address: str = Field(default="", description="Адрес РОСП/УФССП")
@@ -30,7 +33,7 @@ class CourtInfo(BaseModel):
         return coerce_to_str(v)
 
 
-class PartyInfo(BaseModel):
+class PartyInfo(ValidatedPartyMixin):
     name: str = Field(default="", description="Наименование или ФИО стороны")
     party_type: str = Field(default="", description="Тип стороны (Физлицо, Юрлицо, Муниципальный орган)")
     details: str = Field(default="", description="Реквизиты, адрес, паспортные данные, ИНН")
@@ -43,11 +46,11 @@ class PartyInfo(BaseModel):
 
 
 class FinancesInfo(BaseModel):
-    main_debt_rub: Optional[float] = Field(default=None, description="Основной долг в рублях")
-    court_costs_rub: Optional[float] = Field(default=None, description="Судебные расходы / пошлина в рублях")
-    periodic_rub: str = Field(default="", description="Периодические платежи")
+    main_debt_rub: Optional[float] = Field(ge=0, default=None, description="Основной долг в рублях")
+    court_costs_rub: Optional[float] = Field(ge=0, default=None, description="Судебные расходы / пошлина в рублях")
+    periodic_rub: str = Field(ge=0, default="", description="Периодические платежи")
     fee_penalty: str = Field(default="", description="Исполнительский сбор / штраф")
-    total_rub: Optional[float] = Field(default=None, description="Итоговая сумма к взысканию в рублях")
+    total_rub: Optional[float] = Field(ge=0, default=None, description="Итоговая сумма к взысканию в рублях")
     non_monetary_summary: str = Field(default="", description="Предмет неимущественного требования")
 
     @field_validator('main_debt_rub', 'court_costs_rub', 'total_rub', mode='before')
@@ -94,4 +97,3 @@ class EnforcementOrderDoc(BaseModel):
     def restore_ip_format(cls, v: Any) -> str:
         """Восстановление канонического формата NNNNN/NN/NNNNN-ИП из слитных цифр."""
         return normalize_ip_number(v)
-

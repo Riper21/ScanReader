@@ -16,12 +16,16 @@ def parse_russian_currency(val: Any) -> Optional[float]:
     """
     Преобразует произвольное значение (число или строку вида '125 432,50 руб.',
     '100 000 (сто тысяч) руб. 50 коп.', '45.000,00') в число float.
+
+    ВАЖНО (Фаза 6.2): отрицательное значение НЕ превращается в None. Раньше
+    VLM, вернувший -150000, получал «поле не заполнено» — неотличимо от
+    отсутствия данных, то есть сведения о переплате терялись молча. Теперь знак
+    сохраняется, и отрицательную сумму отвергает ограничение ge=0 схемы с
+    понятным сообщением вместо тихой потери.
     """
     if val is None:
         return None
     if isinstance(val, (int, float)):
-        if val < 0:
-            return None
         # Исключаем 10- и 12-значные целые числа без указания валюты (ИНН)
         if isinstance(val, int) and (10**9 <= val < 10**10 or 10**11 <= val < 10**12):
             return None
@@ -33,9 +37,15 @@ def parse_russian_currency(val: Any) -> Optional[float]:
     if text in ("0", "0.0", "0,0", "0.00", "0 руб"):
         return 0.0
 
-    # Явный запрет отрицательных сумм
+    # Отрицательная сумма: знак СОХРАНЯЕТСЯ, чтобы ограничение схемы сработало
     if re.search(r"(?:^|\s)-\s*\d", text):
-        return None
+        cleaned = re.sub(r"[^\d,.\s]", "", text).replace(" ", "").replace(",", ".")
+        # Точка от сокращения «руб.» остаётся в хвосте: «100.50.» не парсится
+        cleaned = cleaned.strip(".,")
+        try:
+            return -abs(float(cleaned))
+        except ValueError:
+            return None
 
     # Проверка наличия валютного маркера
     has_currency = bool(re.search(r"(?:руб|р\b|₽)", text, flags=re.IGNORECASE))

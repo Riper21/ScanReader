@@ -6,12 +6,14 @@ from scan_reader.core.utils import coerce_to_str
 
 
 class HrEmployeeInfo(BaseModel):
+
+
     full_name: str = Field(default="", description="ФИО работника")
     personnel_number: str = Field(default="", description="Табельный номер")
     structural_unit: str = Field(default="", description="Структурное подразделение (отдел, департамент, цех)")
     position: str = Field(default="", description="Должность, специальность или профессия")
-    salary_rub: Optional[float] = Field(default=None, description="Оклад / тарифная ставка (руб)")
-    bonus_rub: Optional[float] = Field(default=None, description="Надбавка (руб)")
+    salary_rub: Optional[float] = Field(ge=0, default=None, description="Оклад / тарифная ставка (руб)")
+    bonus_rub: Optional[float] = Field(ge=0, default=None, description="Надбавка (руб)")
     snils: str = Field(default="", description="СНИЛС работника")
     inn: str = Field(default="", description="ИНН работника")
 
@@ -27,6 +29,7 @@ class HrEmployeeInfo(BaseModel):
 
 
 class HrOrderDoc(BaseModel):
+    __test__ = False
     doc_number: str = Field(default="", description="Номер приказа/распоряжения")
     doc_date: str = Field(default="", description="Дата составления приказа (DD.MM.YYYY)")
     form_code: str = Field(default="Т-1", description="Код унифицированной формы (Т-1, Т-5, Т-6, Т-8 или Свободная форма)")

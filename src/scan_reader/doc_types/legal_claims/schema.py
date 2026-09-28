@@ -2,13 +2,12 @@
 from typing import Optional, Any
 from pydantic import BaseModel, Field, field_validator
 from scan_reader.core.finance_parser import parse_russian_currency
+from scan_reader.core.fields import ValidatedPartyMixin
 from scan_reader.core.utils import coerce_to_str
 
 
-class PartyClaimInfo(BaseModel):
+class PartyClaimInfo(ValidatedPartyMixin):
     name: str = Field(default="", description="Наименование организации или ФИО стороны")
-    inn: str = Field(default="", description="ИНН стороны (10 или 12 цифр)")
-    kpp: str = Field(default="", description="КПП организации")
     address: str = Field(default="", description="Адрес местонахождения / регистрации")
     signatory_fio: str = Field(default="", description="ФИО подписанта")
 
@@ -19,10 +18,12 @@ class PartyClaimInfo(BaseModel):
 
 
 class ClaimFinances(BaseModel):
-    principal_debt_rub: Optional[float] = Field(default=None, description="Сумма основного долга (руб)")
-    penalty_rub: Optional[float] = Field(default=None, description="Сумма пени / неустойки (руб)")
-    interest_rub: Optional[float] = Field(default=None, description="Проценты за пользование чужими денежными средствами (ст. 395 ГК РФ)")
-    total_claim_rub: Optional[float] = Field(default=None, description="Общая сумма претензионных требований (руб)")
+
+
+    principal_debt_rub: Optional[float] = Field(ge=0, default=None, description="Сумма основного долга (руб)")
+    penalty_rub: Optional[float] = Field(ge=0, default=None, description="Сумма пени / неустойки (руб)")
+    interest_rub: Optional[float] = Field(ge=0, default=None, description="Проценты за пользование чужими денежными средствами (ст. 395 ГК РФ)")
+    total_claim_rub: Optional[float] = Field(ge=0, default=None, description="Общая сумма претензионных требований (руб)")
     currency: str = Field(default="RUB", description="Валюта требований")
 
     @field_validator("principal_debt_rub", "penalty_rub", "interest_rub", "total_claim_rub", mode="before")
@@ -37,6 +38,7 @@ class ClaimFinances(BaseModel):
 
 
 class LegalClaimDoc(BaseModel):
+    __test__ = False
     doc_number: str = Field(default="", description="Исходящий номер претензии")
     doc_date: str = Field(default="", description="Дата составления претензии (DD.MM.YYYY)")
     city: str = Field(default="", description="Город составления претензии")

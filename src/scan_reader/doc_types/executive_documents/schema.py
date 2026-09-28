@@ -2,10 +2,13 @@
 from typing import Optional, Any
 from pydantic import BaseModel, Field, field_validator
 from scan_reader.core.finance_parser import parse_russian_currency
+from scan_reader.core.fields import ValidatedPartyMixin
 from scan_reader.core.utils import coerce_to_str
 
 
 class CourtDetails(BaseModel):
+
+
     name: str = Field(default="", description="Наименование суда")
     address: str = Field(default="", description="Адрес суда")
     court_type: str = Field(default="", description="Тип суда (Арбитражный, Районный, Мировой)")
@@ -17,7 +20,7 @@ class CourtDetails(BaseModel):
         return coerce_to_str(v)
 
 
-class PartyDetails(BaseModel):
+class PartyDetails(ValidatedPartyMixin):
     name: str = Field(default="", description="Наименование юрлица или ФИО физлица")
     party_type: str = Field(default="", description="Тип стороны (Юрлицо, Физлицо, ИП, Гос. орган)")
     details: str = Field(default="", description="Реквизиты, ИНН, ОГРН, адрес, паспортные данные")
@@ -29,11 +32,11 @@ class PartyDetails(BaseModel):
 
 
 class ExecFinances(BaseModel):
-    main_debt_rub: Optional[float] = Field(default=None, description="Сумма основного долга")
-    interest_penalty_rub: Optional[float] = Field(default=None, description="Проценты / пени / неустойка")
-    court_fee_rub: Optional[float] = Field(default=None, description="Госпошлина / третейский сбор")
-    other_rub: Optional[float] = Field(default=None, description="Иные расходы")
-    total_rub: Optional[float] = Field(default=None, description="Итоговая сумма к взысканию")
+    main_debt_rub: Optional[float] = Field(ge=0, default=None, description="Сумма основного долга")
+    interest_penalty_rub: Optional[float] = Field(ge=0, default=None, description="Проценты / пени / неустойка")
+    court_fee_rub: Optional[float] = Field(ge=0, default=None, description="Госпошлина / третейский сбор")
+    other_rub: Optional[float] = Field(ge=0, default=None, description="Иные расходы")
+    total_rub: Optional[float] = Field(ge=0, default=None, description="Итоговая сумма к взысканию")
     non_monetary: str = Field(default="", description="Требования неимущественного характера")
 
     @field_validator('main_debt_rub', 'interest_penalty_rub', 'court_fee_rub', 'other_rub', 'total_rub', mode='before')
@@ -73,4 +76,3 @@ class ExecutiveDocumentDoc(BaseModel):
     @classmethod
     def clean_strings(cls, v: Any) -> str:
         return coerce_to_str(v)
-

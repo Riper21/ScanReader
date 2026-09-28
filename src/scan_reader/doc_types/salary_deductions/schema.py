@@ -1,11 +1,21 @@
 # -*- coding: utf-8 -*-
 from typing import Optional, Any
 from pydantic import BaseModel, Field, field_validator
+from scan_reader.core.fields import (
+    BIK_PATTERN,
+    INN_PATTERN,
+    KPP_PATTERN,
+    ValidatedBankMixin,
+    digits_only,
+    empty_str_to_none,
+)
 from scan_reader.core.finance_parser import parse_russian_currency
 from scan_reader.core.utils import coerce_to_str, normalize_ip_number
 
 
 class AuthorityInfo(BaseModel):
+
+
     name: str = Field(default="", description="Наименование органа принудительного исполнения (ОСП/РОСП)")
     jurisdiction: str = Field(default="Российская Федерация", description="Юрисдикция (РФ, РК и др.)")
     address: str = Field(default="", description="Адрес подразделения судебных приставов")
@@ -28,11 +38,11 @@ class EmployerInfo(BaseModel):
 
 
 class DeductionFinances(BaseModel):
-    debt_amount_rub: Optional[float] = Field(default=None, description="Сумма задолженности (руб)")
-    fee_penalty_rub: Optional[float] = Field(default=None, description="Исполнительский сбор / штраф (руб)")
-    total_deduction_rub: Optional[float] = Field(default=None, description="Общая сумма удержания (руб)")
-    deduction_percentage: str = Field(default="", description="Процент удержания (например, 50% ежемесячно, 25% алименты)")
-    periodic_details: str = Field(default="", description="Порядок и сроки перечисления удержанных сумм")
+    debt_amount_rub: Optional[float] = Field(default=None, ge=0, description="Основная задолженность (руб.)")
+    fee_penalty_rub: Optional[float] = Field(default=None, ge=0, description="Госпошлина / проценты (руб.)")
+    total_deduction_rub: Optional[float] = Field(default=None, ge=0, description="Итого к удержанию (руб.)")
+    deduction_percentage: str = Field(default="", description="Процент удержания (число, «50 процентов», «1/4 части»)")
+    periodic_details: str = Field(default="", description="Периодичность и периодическая сумма удержания")
 
     @field_validator('debt_amount_rub', 'fee_penalty_rub', 'total_deduction_rub', mode='before')
     @classmethod
@@ -44,21 +54,144 @@ class DeductionFinances(BaseModel):
     def clean_strings(cls, v: Any) -> str:
         return coerce_to_str(v)
 
+    @field_validator('deduction_percentage', mode='after')
+    @classmethod
+    def _check_percentage(cls, v: str) -> str:
+        """
+        Схема отвергает ЗАВЕДОМО непригодную запись и выход за 0..100 %.
 
-class PaymentDetailsInfo(BaseModel):
-    bik: str = Field(default="", description="БИК банка ТОФК / казначейства (9 цифр, например '015004950')")
-    payment_account: str = Field(default="", description="Номер счета казначейства / расчетного счета (20 цифр, например '03212643000000015113')")
-    recipient: str = Field(default="", description="Официальное наименование получателя платежа для казначейства (УФК по...)")
-    recipient_inn: str = Field(default="", description="ИНН получателя (10 цифр)")
+        Распознаваемость определяется ТЕМ ЖЕ парсером, что использует аудитор
+        (math_verifier.parse_percentage_value). Иначе формулировки, реально
+        встречающиеся в судебных актах («50 процентов», «1/4 части заработка»),
+        отвергались бы схемой, но принимались бы при проверке.
+
+        Домысливать процент нельзя: из 999 молча превратилось бы 0. Юридическую
+        оценку допустимых 50/70 % по ст. 99 229-ФЗ делает аудитор.
+        """
+        if not v.strip():
+            return v
+        import re
+
+        from scan_reader.verifier.math_verifier import parse_percentage_value
+
+        # Проверки ФОРМЫ выполняются по исходной строке: парсер умеет вытащить
+        # правдоподобное число из мусора («-5%» прочтётся как 5 %, «50%%» — как
+        # 50 %), и формальные браки прошли бы незамеченными.
+        if v.count("%") > 1:
+            raise ValueError(f"Процент удержания содержит повторяющийся знак «%»: {v!r}")
+        if re.search(r"(^|\s)-\s*\d", v):
+            raise ValueError(
+                f"Процент удержания отрицателен, что невозможно по существу: {v!r}"
+            )
+
+        value = parse_percentage_value(v)
+        if value is None:
+            # Голое число без знака «%» («50») — обычная запись VLM, принимается.
+            bare = v.replace(" ", "").replace(",", ".").rstrip("%")
+            try:
+                value = float(bare)
+            except ValueError:
+                # Словесные формы без цифр («четверть», «половина») допустимы:
+                # это не брак формы, а вопрос права, который решает аудитор.
+                if re.search(r"\d", v) or "%" in v:
+                    raise ValueError(
+                        f"Процент удержания записан нераспознаваемо: {v!r}. Ожидается число "
+                        "(«50%», «50 процентов») или доля («1/4 части заработка»)."
+                    ) from None
+                return v
+        if value < 0 or value > 100:
+            raise ValueError(
+                f"Процент удержания должен быть в диапазоне 0..100, получено {value} %: {v!r}"
+            )
+        return v
+
+
+class PaymentDetailsInfo(ValidatedBankMixin):
+    bik: str = Field(default="", description="БИК банка (9 цифр, например '015004950')")
+    payment_account: str = Field(default="", description="Расчётный счёт / лицевой счёт (20 цифр, например '03212643000000015113')")
+    recipient: str = Field(default="", description="Полное наименование получателя платежа (УФК/банк)")
+    recipient_inn: str = Field(default="", description="ИНН получателя (10 или 12 цифр)")
     recipient_kpp: str = Field(default="", description="КПП получателя (9 цифр)")
     oktmo: str = Field(default="", description="Код ОКТМО (8 или 11 цифр, например '65756000')")
-    uin: str = Field(default="", description="УИН — Уникальный идентификатор начисления (20-25 цифр, например '32266050260610077000')")
-    rosp_code: str = Field(default="", description="5-значный ведомственный код подразделения РОСП (например, '66050')")
+    uin: str = Field(default="", description="УИН - уникальный идентификатор платежа (20-25 цифр)")
+    rosp_code: str = Field(default="", description="5-значный код ведомственного органа получателя, например '66050'")
 
-    @field_validator('bik', 'payment_account', 'recipient', 'recipient_inn', 'recipient_kpp', 'oktmo', 'uin', 'rosp_code', mode='before')
+    @field_validator('recipient', 'uin', 'rosp_code', 'oktmo', mode='before')
     @classmethod
     def clean_strings(cls, v: Any) -> str:
         return coerce_to_str(v)
+
+    @field_validator('recipient_inn', 'recipient_kpp', mode='before')
+    @classmethod
+    def _blank_to_none(cls, v: Any) -> Any:
+        return empty_str_to_none(v)
+
+    @field_validator('recipient_inn', mode='after')
+    @classmethod
+    def _check_inn(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        cleaned = digits_only(v)
+        if cleaned is None or not __import__("re").match(INN_PATTERN, cleaned):
+            raise ValueError(
+                f"ИНН получателя должен содержать 10 или 12 цифр, получено: {v!r}"
+            )
+        from scan_reader.verifier.checksums import validate_inn
+
+        ok, msg = validate_inn(cleaned)
+        if not ok:
+            raise ValueError(f"ИНН получателя {cleaned} не проходит контрольную сумму ФНС: {msg}")
+        return cleaned
+
+    @field_validator('recipient_kpp', mode='after')
+    @classmethod
+    def _check_kpp(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        cleaned = digits_only(v)
+        if cleaned is None or not __import__("re").match(KPP_PATTERN, cleaned):
+            raise ValueError(f"КПП получателя должен содержать 9 цифр, получено: {v!r}")
+        return cleaned
+
+    @field_validator('oktmo', mode='after')
+    @classmethod
+    def _check_oktmo(cls, v: str) -> str:
+        if not v.strip():
+            return v
+        cleaned = digits_only(v)
+        if cleaned is None or len(cleaned) not in (8, 11):
+            raise ValueError(
+                f"ОКТМО должен содержать 8 или 11 цифр, получено {len(cleaned) if cleaned else 0}: {v!r}"
+            )
+        return cleaned
+
+    @field_validator('bik', 'payment_account', mode='before')
+    @classmethod
+    def _bank_blank_to_none(cls, v: Any) -> Any:
+        return empty_str_to_none(v)
+
+    @field_validator('bik', mode='after')
+    @classmethod
+    def _check_bik_format(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        cleaned = digits_only(v)
+        if cleaned is None or not __import__("re").match(BIK_PATTERN, cleaned):
+            raise ValueError(
+                f"БИК должен содержать 9 цифр и начинаться с 04 (банк) "
+                f"или 01 (казначейство), получено: {v!r}"
+            )
+        return cleaned
+
+    @field_validator('payment_account', mode='after')
+    @classmethod
+    def _check_account_digits(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        cleaned = digits_only(v)
+        if cleaned is None or len(cleaned) != 20:
+            raise ValueError(f"Банковский счёт должен содержать 20 цифр, получено: {v!r}")
+        return cleaned
 
 
 class SalaryDeductionDoc(BaseModel):
@@ -105,5 +238,4 @@ class SalaryDeductionDoc(BaseModel):
     def restore_ip_format(cls, v: Any) -> str:
         """Восстановление канонического формата NNNNN/NN/NNNNN-ИП из слитных цифр."""
         return normalize_ip_number(v)
-
 

@@ -2,13 +2,12 @@
 from typing import Optional, List, Any
 from pydantic import BaseModel, Field, field_validator
 from scan_reader.core.finance_parser import parse_russian_currency
+from scan_reader.core.fields import ValidatedPartyMixin
 from scan_reader.core.utils import coerce_to_str
 
 
-class UpdParty(BaseModel):
+class UpdParty(ValidatedPartyMixin):
     name: str = Field(default="", description="Наименование организации / ИП")
-    inn: str = Field(default="", description="ИНН (10 или 12 цифр)")
-    kpp: str = Field(default="", description="КПП организации (9 цифр)")
     address: str = Field(default="", description="Адрес местонахождения")
 
     @field_validator("name", "inn", "kpp", "address", mode="before")
@@ -18,6 +17,8 @@ class UpdParty(BaseModel):
 
 
 class UpdItem(BaseModel):
+
+
     row_num: str = Field(default="1", description="Номер строки")
     name: str = Field(default="", description="Наименование товара / описания выполненных работ / услуг")
     unit: str = Field(default="шт", description="Единица измерения (код или условное обозначение)")
@@ -41,8 +42,8 @@ class UpdItem(BaseModel):
 
 class UpdFinances(BaseModel):
     total_rub_no_vat: Optional[float] = Field(default=None, description="Всего стоимость без налога")
-    total_vat_rub: Optional[float] = Field(default=None, description="Всего сумма налога (НДС)")
-    total_rub: Optional[float] = Field(default=None, description="Всего к оплате с учетом налога")
+    total_vat_rub: Optional[float] = Field(ge=0, default=None, description="Всего сумма налога (НДС)")
+    total_rub: Optional[float] = Field(ge=0, default=None, description="Всего к оплате с учетом налога")
     currency: str = Field(default="Российский рубль, 643", description="Валюта документа")
 
     @field_validator("total_rub_no_vat", "total_vat_rub", "total_rub", mode="before")
@@ -57,6 +58,7 @@ class UpdFinances(BaseModel):
 
 
 class InvoiceUpdDoc(BaseModel):
+    __test__ = False
     doc_number: str = Field(default="", description="Номер счета-фактуры / УПД")
     doc_date: str = Field(default="", description="Дата составления документа (DD.MM.YYYY)")
     status: str = Field(default="1", description="Статус документа (1 - счет-фактура и передаточный документ, 2 - только передаточный документ)")
