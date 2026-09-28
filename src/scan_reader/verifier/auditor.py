@@ -35,7 +35,15 @@ class ZeroTrustAuditor:
         raw_ocr_text: Optional[str] = None,
         extraction_method: str = "vlm",
         scan_dpi: Optional[float] = None,
+        gate_source: Optional[str] = None,
+        gate_expected: bool = False,
     ) -> VerificationReport:
+        """
+        :param gate_expected: True, если исходный документ передан и эталонный текст
+            ОБЯЗАН быть доступен (конвейер facade). False — если аудит идёт по
+            готовому JSON без документа (CLI `verify`, MCP `verify_legal_data`):
+            отсутствие эталона там штатно и не является отказом инфраструктуры.
+        """
         issues: List[VerificationIssue] = []
         details: Dict[str, Any] = {}
 
@@ -64,19 +72,40 @@ class ZeroTrustAuditor:
         cls._audit_dates(data, issues, details)
 
         # 4. Cross-Modal Hallucination Gate
+        # C-01: неподтверждённые VLM-сущности признаются ОШИБКОЙ. При severity="warning"
+        # документ с выдуманными ИНН/номером дела/ФИО получал zero_trust_verified
+        # и is_valid=True — статус прямо противоречил содержимому отчёта.
         if raw_ocr_text:
             discrepancies = audit_cross_modal_consistency(data, raw_ocr_text)
             if discrepancies:
                 for disc in discrepancies:
                     issues.append(
                         VerificationIssue(
-                            severity="warning",
+                            severity="error",
                             code="HALLUCINATION_RISK",
                             message=disc["reason"],
                             field_name=disc["field"],
                         )
                     )
                 details["hallucination_discrepancies"] = discrepancies
+            details["gate_executed"] = True
+            details["gate_source"] = gate_source or "text_layer"
+        else:
+            # Отсутствие эталона фиксируется явно: раньше молчаливый пропуск гейта давал
+            # zero_trust_verified, хотя кросс-модальная сверка не выполнялась вовсе.
+            details["gate_executed"] = False
+            details["gate_source"] = None
+            details["gate_expected"] = gate_expected
+            if gate_expected:
+                issues.append(
+                    VerificationIssue(
+                        "warning",
+                        "GATE_NOT_EXECUTED",
+                        "Кросс-модальный гейт не выполнен: эталонный текстовый слой/транскрипция "
+                        "недоступен. Реквизиты не подтверждены исходным текстом документа.",
+                        "gate",
+                    )
+                )
 
         # 5. Scan Quality Check (M-06): низкое разрешение скана -> OCR_LOW_CONFIDENCE
         if scan_dpi is not None and scan_dpi > 0 and scan_dpi < 150:
@@ -93,15 +122,24 @@ class ZeroTrustAuditor:
 
         # Determine Final Canonical Status
         has_error = any(i.severity == "error" for i in issues)
+        gate_ok = details.get("gate_executed") or not details.get("gate_expected")
 
+        # C-02/C-03: zero_trust_verified больше не выдаётся «за просто наличие числа».
+        # Требуется, чтобы контрольные суммы реально прошли И сверка денег реально
+        # сравнивала два и более числа. Кросс-модальный гейт обязателен только когда
+        # исходный документ передан (gate_expected) — иначе его отсутствие штатно.
         if has_error:
             status = VerificationStatus.DISCREPANCY_DETECTED
         elif details.get("scan_low_quality"):
             status = VerificationStatus.OCR_LOW_CONFIDENCE
         elif extraction_method == "regex_fallback":
             status = VerificationStatus.HEURISTIC_FALLBACK
-        elif details.get("checksums_checked", 0) > 0 or details.get("math_checked", False):
+        elif not gate_ok:
+            status = VerificationStatus.GATE_NOT_EXECUTED
+        elif details.get("checksums_verified_ok", 0) > 0 and details.get("math_verified_ok"):
             status = VerificationStatus.ZERO_TRUST_VERIFIED
+        elif details.get("checksums_checked", 0) > 0 or details.get("math_checked"):
+            status = VerificationStatus.PARTIALLY_VERIFIED
         else:
             status = VerificationStatus.VLM_UNVERIFIED
 
@@ -115,13 +153,19 @@ class ZeroTrustAuditor:
     @classmethod
     def _audit_identifiers(cls, data: Dict[str, Any], issues: List[VerificationIssue], details: Dict[str, Any]) -> None:
         count = 0
+        passed = 0
+
+        def _bump(ok: bool) -> None:
+            nonlocal count, passed
+            count += 1
+            if ok:
+                passed += 1
 
         # INN check helper
         def _check_inn(val: Any, field_name: str):
-            nonlocal count
             if val and isinstance(val, str) and len(val.strip()) >= 9:
-                count += 1
                 ok, msg = validate_inn(val)
+                _bump(ok)
                 if not ok:
                     issues.append(VerificationIssue("error", "INVALID_INN", msg, field_name))
 
@@ -156,10 +200,9 @@ class ZeroTrustAuditor:
 
         # SNILS check helper
         def _check_snils(val: Any, field_name: str):
-            nonlocal count
             if val and isinstance(val, str) and len(val.strip()) >= 9:
-                count += 1
                 ok, msg = validate_snils(val)
+                _bump(ok)
                 if not ok:
                     issues.append(VerificationIssue("error", "INVALID_SNILS", msg, field_name))
 
@@ -169,10 +212,9 @@ class ZeroTrustAuditor:
 
         # OGRN check helper
         def _check_ogrn(val: Any, field_name: str):
-            nonlocal count
             if val and isinstance(val, str) and len(val.strip()) >= 12:
-                count += 1
                 ok, msg = validate_ogrn(val)
+                _bump(ok)
                 if not ok:
                     issues.append(VerificationIssue("error", "INVALID_OGRN", msg, field_name))
 
@@ -191,16 +233,16 @@ class ZeroTrustAuditor:
                 bik = m_bik.group(0)
 
         if bik and isinstance(bik, str) and len(bik.strip()) >= 8:
-            count += 1
             ok, msg = validate_bik(bik)
+            _bump(ok)
             if not ok:
                 issues.append(VerificationIssue("error", "INVALID_BIK", msg, "bik"))
 
         # Bank account check (C-15: validate_bank_account)
         account = pay_details.get("payment_account") or pay_details.get("account")
         if account and bik:
-            count += 1
             ok_acc, msg_acc = validate_bank_account(str(account), str(bik))
+            _bump(ok_acc)
             if not ok_acc:
                 # Счета, открытые в самом Банке России (ГРКЦ), не подчиняются
                 # стандартному ключеванию 565-П: ложный error недопустим.
@@ -226,7 +268,7 @@ class ZeroTrustAuditor:
         uin_digits = clean_digits(pay_details.get("uin") or "")
         rosp_digits = clean_digits(pay_details.get("rosp_code") or data.get("rosp_code") or "")
         if len(uin_digits) >= 20 and rosp_digits:
-            count += 1
+            _bump(rosp_digits in uin_digits)
             if rosp_digits not in uin_digits:
                 issues.append(
                     VerificationIssue(
@@ -278,6 +320,7 @@ class ZeroTrustAuditor:
                 )
 
         details["checksums_checked"] = count
+        details["checksums_verified_ok"] = passed
 
     @classmethod
     def _audit_finances(cls, data: Dict[str, Any], issues: List[VerificationIssue], details: Dict[str, Any]) -> None:
@@ -286,10 +329,24 @@ class ZeroTrustAuditor:
         fee = fin.get("fee_penalty_rub") or fin.get("penalty_rub")
         total = fin.get("total_deduction_rub") or fin.get("total_rub")
 
-        # 1. Court amounts reconciliation
-        if total is not None or debt is not None:
+        # 1. Court amounts reconciliation.
+        # math_verified_ok выставляется ТОЛЬКО когда сверка действительно сравнивала
+        # два и более числа. Раньше math_checked=True при наличии одного числа, а
+        # verify_amounts_reconciliation в вырожденной ветке возвращает True, ничего
+        # не сравнивая, — это давало zero_trust_verified без единой проверки.
+        components_present = sum(1 for v in (debt, fee) if v is not None)
+        if total is not None and components_present >= 2:
             details["math_checked"] = True
             ok, msg = verify_amounts_reconciliation(debt=debt, fee_penalty=fee, total=total)
+            if not ok:
+                issues.append(VerificationIssue("error", "FINANCIAL_DISCREPANCY", msg, "finances.total_rub"))
+            else:
+                details["math_verified_ok"] = True
+        elif total is not None and debt is not None:
+            # Компонент один: сверка сводится к «долг <= итог». Сравнение реальное,
+            # но неполное — math_verified_ok не выставляется.
+            details["math_checked"] = True
+            ok, msg = verify_amounts_reconciliation(debt=debt, fee_penalty=None, total=total)
             if not ok:
                 issues.append(VerificationIssue("error", "FINANCIAL_DISCREPANCY", msg, "finances.total_rub"))
 
@@ -311,6 +368,8 @@ class ZeroTrustAuditor:
                             "finances.total_rub",
                         )
                     )
+                else:
+                    details["math_verified_ok"] = True
             except (ValueError, TypeError):
                 issues.append(
                     VerificationIssue(
@@ -343,6 +402,8 @@ class ZeroTrustAuditor:
                             "finances.total_claim_rub",
                         )
                     )
+                else:
+                    details["math_verified_ok"] = True
             except (ValueError, TypeError):
                 issues.append(
                     VerificationIssue(
