@@ -781,6 +781,10 @@ def generate_run_summary(all_category_metrics: Dict[str, Dict[str, Any]]) -> Dic
     all_scores = []
     status_dist = {"excellent": 0, "high": 0, "satisfactory": 0, "needs_attention": 0}
     categories_summary = {}
+    measured_vs_gt = 0
+    measured_autonomously = 0
+    gt_available_total = 0
+    low_confidence_categories = []
 
     for cat_name, metrics in all_category_metrics.items():
         if not isinstance(metrics, dict):
@@ -794,11 +798,27 @@ def generate_run_summary(all_category_metrics: Dict[str, Dict[str, Any]]) -> Dic
         for d in metrics.get("documents", []):
             all_scores.append(d.get("overall_score", 0.0))
 
+        # Фаза 9.2: сводка запуска ТЕРЯЛА честные метрики измерения, которые
+        # evaluate_dataset формирует с Фазы 5.5. Оператор читал «среднее 100%»
+        # без сведений о том, сколько документов мерилось против эталона, а
+        # сколько — автономно, и на каком числе полей держится цифра.
+        measured_vs_gt += int(metrics.get("documents_measured_in_benchmark_mode", 0) or 0)
+        measured_autonomously += int(metrics.get("total_documents", 0) or 0) - int(
+            metrics.get("documents_measured_in_benchmark_mode", 0) or 0
+        )
+        gt_available_total += int(metrics.get("ground_truth_documents_available", 0) or 0)
+        if (metrics.get("measurement_caveats") or {}).get("low_confidence"):
+            low_confidence_categories.append(cat_name)
+
         categories_summary[cat_name] = {
             "total_documents": doc_count,
             "average_quality_score_percent": metrics.get("average_quality_score_percent", 0.0),
             "mode": metrics.get("mode", "autonomous"),
-            "status_counts": c_status
+            "status_counts": c_status,
+            "documents_measured_in_benchmark_mode": metrics.get("documents_measured_in_benchmark_mode", 0),
+            "ground_truth_documents_available": metrics.get("ground_truth_documents_available", 0),
+            "ground_truth_coverage_percent": metrics.get("ground_truth_coverage_percent", 0.0),
+            "measurement_caveats": metrics.get("measurement_caveats", {}),
         }
 
     overall_score = round(sum(all_scores) / len(all_scores), 2) if all_scores else 0.0
@@ -808,6 +828,18 @@ def generate_run_summary(all_category_metrics: Dict[str, Dict[str, Any]]) -> Dic
         "total_documents_processed": total_docs,
         "overall_quality_score_percent": overall_score,
         "status_distribution": status_dist,
+        # Фаза 9.2: сводный показатель точности без оговорок вводит в заблуждение,
+        # когда эталонов нет вовсе или они покрывают лишь часть документов.
+        "overall_accuracy_is_real": bool(measured_vs_gt) and not low_confidence_categories,
+        "measurement_caveats": {
+            "documents_measured_against_ground_truth": measured_vs_gt,
+            "documents_measured_autonomously": measured_autonomously,
+            "ground_truth_documents_available": gt_available_total,
+            "ground_truth_coverage_percent": (
+                round(measured_vs_gt / gt_available_total * 100.0, 1) if gt_available_total else 0.0
+            ),
+            "categories_without_measured_benchmark": low_confidence_categories,
+        },
         "categories": categories_summary
     }
 

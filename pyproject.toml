@@ -78,7 +78,9 @@ branch = true
 source = ["scan_reader"]
 
 [tool.coverage.report]
-fail_under = 55
+# Фаза 9: порог поднят с 55 %, которые перестали быть защитой после того, как
+# добавлены регрессионные тесты Фаз 1-8. Фактическое покрытие - 72 %.
+fail_under = 70
 show_missing = true
 skip_covered = true
 
