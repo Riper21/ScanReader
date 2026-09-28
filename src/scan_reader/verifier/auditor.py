@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
-from ..core.utils import get_logger
+from ..core.utils import as_dict as _as_dict, get_logger
 from .checksums import clean_digits, validate_bik, validate_inn, validate_ogrn, validate_snils, validate_bank_account
 from .chronology import parse_flexible_date
 from .hallucination_gate import audit_cross_modal_consistency
@@ -18,11 +18,6 @@ from .spec import VerificationSpec, get_nested_value, resolve_spec
 from .status import VerificationIssue, VerificationReport, VerificationStatus
 
 logger = get_logger("verifier.auditor")
-
-
-def _as_dict(val: Any) -> Dict[str, Any]:
-    """Безопасный доступ к вложенным структурам: возвращает словарь или пустой словарь."""
-    return val if isinstance(val, dict) else {}
 
 
 _EMPTY_STRINGS = ("", "none", "null", "nan")
@@ -39,6 +34,14 @@ _DATE_FIELD_SUFFIXES = (
 def _looks_like_date(path: str) -> bool:
     leaf = path.rsplit(".", 1)[-1].lower()
     return any(leaf == suffix or leaf.endswith("_" + suffix) for suffix in _DATE_FIELD_SUFFIXES)
+
+
+def _recovered_fields(data: Any) -> List[str]:
+    """Поля, восстановленные эвристикой вместо экстракции модели."""
+    if not isinstance(data, dict):
+        return []
+    recovered = data.get("_recovered_by_regex")
+    return [str(x) for x in recovered] if isinstance(recovered, list) else []
 
 
 def _first_alternative(data: Any, paths: Sequence[str]) -> Tuple[Any, Optional[str]]:
@@ -262,7 +265,12 @@ class ZeroTrustAuditor:
         elif details.get("scan_low_quality"):
             status = VerificationStatus.OCR_LOW_CONFIDENCE
         elif extraction_method == "regex_fallback":
+            # Фаза 8.1: статус стал достижимым — эвристика действительно
+            # срабатывает, когда модель не вернула суммы и они были восстановлены
+            # регулярным выражением. Раньше условие проверяло результат
+            # классификации, который никогда не равнялся regex_fallback.
             status = VerificationStatus.HEURISTIC_FALLBACK
+            details["recovered_by_regex"] = _recovered_fields(data)
         elif not gate_ok:
             status = VerificationStatus.GATE_NOT_EXECUTED
         elif details.get("checksums_verified_ok", 0) > 0 and details.get("math_verified_ok"):

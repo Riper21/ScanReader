@@ -6,12 +6,11 @@ from __future__ import annotations
 
 import os
 import re
-import sys
 import tempfile
 from pathlib import Path
 from typing import Optional, Union
 
-from .utils import get_logger
+from .utils import get_logger, setup_console_utf8
 
 # Фаза 7.5: сырой logging.getLogger не имеет фильтра маскирования секретов.
 # Импорт utils здесь безопасен: utils импортирует io_utils только внутри
@@ -29,26 +28,18 @@ class InputFileError(ValueError):
     """Raised when an input file is missing, exceeds limits, or cannot be safely read."""
 
 
-def configure_streams() -> None:
-    """Safely configure stdout and stderr to UTF-8 on Windows and POSIX."""
-    for stream in (sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is not None:
-            try:
-                reconfigure(encoding="utf-8", errors="replace")
-            except (OSError, ValueError) as e:
-                _io_logger.debug(f"Не удалось переконфигурировать поток в UTF-8: {e}")
+# Фаза 8.7: настройка UTF-8 для потоков была реализована трижды - здесь,
+# в core/utils.setup_console_utf8 и инлайн в блоке __main__ json_exporter.
+# Второй вызов на уже перенастроенном потоке на части сборок Python даёт
+# ValueError: cannot set 'encoding' after a stream has been accessed.
+# Осталась одна реализация, и она идемпотентна.
+configure_streams = setup_console_utf8
 
 
-def read_file_safe(path: Union[str, Path], max_bytes: int = MAX_INPUT_BYTES) -> bytes:
-    """Read a file safely checking existence and size limits."""
-    file_path = Path(path).resolve()
-    if not file_path.is_file():
-        raise InputFileError(f"file not found: {file_path}")
-    size = file_path.stat().st_size
-    if size > max_bytes:
-        raise InputFileError(f"input file exceeds size limit ({size} > {max_bytes} bytes): {file_path}")
-    return file_path.read_bytes()
+# Фаза 8.5: read_file_safe удалён. Единственным его вызывающим был
+# tests/test_atomic_io.py; ни document_loader, ни file_processor его не
+# использовали — обе точки проверяли размер файла инлайн. Покрытая тестами,
+# но не используемая функция остаётся мёртвым кодом.
 
 
 def write_atomic(

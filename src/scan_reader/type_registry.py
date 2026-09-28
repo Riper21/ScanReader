@@ -36,7 +36,6 @@ DOC_TYPES_DIR = os.path.join(SCRIPT_DIR, "doc_types")
 logger = get_logger("type_registry")
 
 UNKNOWN_CATEGORY = "unknown"
-UNKNOWN_FOLDER_NAME = "_Требует_ручной_проверки"
 
 REQUIRED_MANIFEST_KEYS = ("id", "title", "folder", "registry_base_name", "js_filename", "js_var", "gt_file", "schema_class")
 
@@ -235,25 +234,6 @@ class PluginSpec:
     def registry_json_name(self) -> str:
         return f"{self.registry_base_name}.json"
 
-    def dashboard_meta(self) -> Dict[str, Any]:
-        """Метаданные для универсального веб-дашборда (попадают в *_META js и doc_types_meta.js)."""
-        meta = {
-            "id": self.id,
-            "title": self.title,
-            "short_title": self.short_title,
-            "js_var": self.js_var,
-            "registry_base_name": self.registry_base_name,
-            "icon": self.dashboard.get("icon", "📄"),
-            "color": self.dashboard.get("color", "blue"),
-            "badge": self.dashboard.get("badge", self.short_title),
-            "columns": [
-                {"label": c.get("label", ""), "kind": c.get("kind", "text")}
-                for c in self.flat_columns
-            ],
-            "paths": self.dashboard.get("paths", {}),
-        }
-        return meta
-
 
 class _Registry:
     """Ленивый синглтон-реестр всех плагинов из doc_types/."""
@@ -338,25 +318,11 @@ def get_plugin(type_id: str) -> PluginSpec:
     return plugin
 
 
-def build_document_schemas() -> Dict[str, Type]:
-    """Совместимость: {id: Pydantic-класс} по всем включенным плагинам."""
-    return {pid: p.schema_cls for pid, p in get_enabled_plugins().items()}
-
-
-def build_system_prompts() -> Dict[str, str]:
-    return {pid: p.prompt_text for pid, p in get_enabled_plugins().items()}
-
-
-def build_category_names() -> Dict[str, str]:
-    names = {pid: p.short_title for pid, p in get_enabled_plugins().items()}
-    names[UNKNOWN_CATEGORY] = "Неопределенная категория"
-    return names
-
-
-def build_category_folders() -> Dict[str, str]:
-    folders = {pid: p.folder for pid, p in get_enabled_plugins().items()}
-    folders[UNKNOWN_CATEGORY] = UNKNOWN_FOLDER_NAME
-    return folders
+# Фаза 8.3: удалены build_document_schemas, build_system_prompts,
+# build_category_names, build_category_folders и PluginSpec.dashboard_meta.
+# Ни у одной из них не было ни одного вызывающего ни в src/, ни в tests/,
+# ни в examples/ — они предлагали «совместимый» API для веб-дашборда, который
+# так и не появился. UNKNOWN_FOLDER_NAME жил только внутри build_category_folders.
 
 
 if __name__ == "__main__":

@@ -10,38 +10,16 @@
 6. Изоляцию ошибок и сквозную телеметрию (RateLimiter, TokenTracker, Cache)
 """
 
+# Фаза 8.10: .env загружается в scan_reader/__init__.py до подмодулей пакета,
+# поэтому здесь импорты стоят как обычно. Раньше загрузка стояла между блоками
+# импортов, и pyproject.toml подавлял E402 для всего файла.
 import os
 import json
 import time
 import re
 from typing import Dict, Any, List, Optional, Tuple, Union
-from dotenv import load_dotenv
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-SRC_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
-PROJECT_ROOT = os.path.abspath(os.path.join(SRC_DIR, ".."))
-ROOT_DIR = PROJECT_ROOT
-
-# Загрузка переменных окружения (C-13): приоритет cwd, затем корень проекта
-load_dotenv(os.path.join(os.getcwd(), ".env"))
-load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
-
-def get_ground_truth_path(gt_filename: Optional[str]) -> Optional[str]:
-    """Разрешает путь к файлу эталонов (ground truth)."""
-    if not gt_filename:
-        return None
-    env_dir = os.getenv("SCANREADER_GROUND_TRUTH_DIR")
-    if env_dir:
-        cand = os.path.join(env_dir, gt_filename)
-        if os.path.exists(cand):
-            return cand
-    cwd_cand = os.path.join(os.getcwd(), "data", "ground_truth", gt_filename)
-    if os.path.exists(cwd_cand):
-        return cwd_cand
-    root_cand = os.path.join(PROJECT_ROOT, "data", "ground_truth", gt_filename)
-    if os.path.exists(root_cand):
-        return root_cand
-    return None
+from . import config as _config
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -96,6 +74,29 @@ def _extraction_failed(base_name: str, reason: str) -> Dict[str, Any]:
     }
 
 logger = get_logger("facade")
+
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+SRC_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
+PROJECT_ROOT = _config.PROJECT_ROOT
+
+
+def get_ground_truth_path(gt_filename: Optional[str]) -> Optional[str]:
+    """Разрешает путь к файлу эталонов (ground truth)."""
+    if not gt_filename:
+        return None
+    env_dir = os.getenv("SCANREADER_GROUND_TRUTH_DIR")
+    if env_dir:
+        cand = os.path.join(env_dir, gt_filename)
+        if os.path.exists(cand):
+            return cand
+    cwd_cand = os.path.join(os.getcwd(), "data", "ground_truth", gt_filename)
+    if os.path.exists(cwd_cand):
+        return cwd_cand
+    root_cand = os.path.join(PROJECT_ROOT, "data", "ground_truth", gt_filename)
+    if os.path.exists(root_cand):
+        return root_cand
+    return None
 
 
 def _get_version() -> str:
@@ -344,7 +345,8 @@ class LegalDocPlatformFacade:
             logger.debug(f"OCR-транскрипция для сверки не выполнена ('{file_path}'): {e}")
             return None
 
-    extract_raw_text_for_audit = _extract_raw_text_for_audit
+    # Фаза 8.3: удалён публичный алиас extract_raw_text_for_audit - у него не
+    # было ни одного вызывающего, а MCP использовал приватное имя.
 
     def _get_client(self):
         """Ленивая безопасная инициализация OpenAI-клиента."""
@@ -675,28 +677,47 @@ class LegalDocPlatformFacade:
             fin_obj = {}
             parsed_data["finances"] = fin_obj
 
+        # Фаза 8.1: факт срабатывания восстановителя ПРОМЕЧАЕТСЯ в результате.
+        # Раньше эвристика применялась молча, а статус heuristic_fallback был
+        # недостижим: extraction_method вычислялся из результата классификации,
+        # который никогда не равнялся "regex_fallback", поэтому и VerificationStatus
+        # .HEURISTIC_FALLBACK, и CLI-код возврата 4 были мёртвыми.
+        # Теперь сумма, восстановленная регулярным выражением вместо модели,
+        # видна оператору и не проходит как полноценная экстракция.
+        recovered_by_regex: List[str] = []
+
         # Проверка ключевых сумм
         cur_total = fin_obj.get("total_rub") or fin_obj.get("total_deduction_rub") or fin_obj.get("debt_amount_rub")
         if cur_total is None or cur_total == 0.0 or str(cur_total).strip() in ("", "None", "null"):
             text_to_scan = reply_text
             if mode == "text" and isinstance(inputs, str):
                 text_to_scan += "\n" + inputs
-            
+
             regex_amounts = extract_amounts_from_text(text_to_scan)
             if regex_amounts.get("total_rub"):
                 logger.info(f"💰 Резервный Regex-сканер восстановил сумму для '{base_name}': {regex_amounts['total_rub']} руб.")
                 if "total_rub" in fin_obj or doc_type in ("executive_documents", "enforcement_orders"):
                     fin_obj["total_rub"] = regex_amounts["total_rub"]
+                    recovered_by_regex.append("finances.total_rub")
                 if "total_deduction_rub" in fin_obj or doc_type == "salary_deductions":
                     fin_obj["total_deduction_rub"] = regex_amounts["total_rub"]
+                    recovered_by_regex.append("finances.total_deduction_rub")
                 if "debt_amount_rub" in fin_obj and not fin_obj.get("debt_amount_rub"):
                     fin_obj["debt_amount_rub"] = regex_amounts.get("main_debt_rub") or regex_amounts["total_rub"]
+                    recovered_by_regex.append("finances.debt_amount_rub")
                 if "main_debt_rub" in fin_obj and not fin_obj.get("main_debt_rub"):
                     fin_obj["main_debt_rub"] = regex_amounts.get("main_debt_rub") or regex_amounts["total_rub"]
+                    recovered_by_regex.append("finances.main_debt_rub")
                 if "court_fee_rub" in fin_obj and not fin_obj.get("court_fee_rub"):
                     fin_obj["court_fee_rub"] = regex_amounts.get("court_fee_rub")
+                    recovered_by_regex.append("finances.court_fee_rub")
                 if "court_costs_rub" in fin_obj and not fin_obj.get("court_costs_rub"):
                     fin_obj["court_costs_rub"] = regex_amounts.get("court_fee_rub")
+                    recovered_by_regex.append("finances.court_costs_rub")
+
+        # Фаза 8.1: нераспарсенный ответ модели — тоже эвристический случай
+        if not _safe_parse_json(reply_text):
+            recovered_by_regex.append("_raw_reply_unparsed")
 
         # Валидация по схеме Pydantic (с пре-валидаторами очистки сумм и нормализации строк)
         schema_cls = plugin.schema_cls if plugin else UniversalDocumentDoc
@@ -711,6 +732,9 @@ class LegalDocPlatformFacade:
                 validated_dict = {"raw_output": str(parsed_data)}
             validated_dict["schema_validated"] = False
             validated_dict["_schema_validation_error"] = str(e)
+
+        if recovered_by_regex:
+            validated_dict["_recovered_by_regex"] = sorted(set(recovered_by_regex))
 
         # Сохранение в кэш
         self.cache.set(cache_key, json.dumps(validated_dict, ensure_ascii=False))
@@ -891,10 +915,14 @@ class LegalDocPlatformFacade:
     def process_single_document(
         self,
         file_path: str,
-        doc_type: Optional[str] = None,
-        prompt_user_on_unknown: bool = False
+        doc_type: Optional[str] = None
     ) -> Dict[str, Any]:
         """
+        # Фаза 8.4: параметр prompt_user_on_unknown удалён. Он был объявлен,
+        # передавался из CLI и MCP со значением False, но НИ РАЗУ НЕ ЧИТАЛСЯ
+        # в теле метода: интерактивный запрос пользователя никогда не
+        # происходил, а объявление создавало иллюзию такой возможности.
+
         Полный конвейер обработки одного документа:
         1. Fast-Path Router (Определение типа)
         2. Specialized Extraction Branch (Извлечение с финансовым сканером)
@@ -918,6 +946,17 @@ class LegalDocPlatformFacade:
 
         # 2. Specialized Extraction Branch (Извлечение через ветку)
         extracted = self.extract_document_data(file_path, doc_type=doc_type)
+
+        # Фаза 8.1: метод извлечения для Zero-Trust-статуса. Раньше здесь стояло
+        # `method if method == "regex_fallback" else "vlm"`, где method — результат
+        # КЛАССИФИКАЦИИ, который никогда не равнялся regex_fallback. Из-за этого
+        # VerificationStatus.HEURISTIC_FALLBACK и CLI-код возврата 4 были
+        # недостижимы. Теперь признак выставляется по фактическому срабатыванию
+        # эвристического восстановителя сумм.
+        recovered_fields = []
+        if isinstance(extracted, dict):
+            recovered_fields = list(extracted.get("_recovered_by_regex") or [])
+        extraction_method = "regex_fallback" if recovered_fields else "vlm"
 
         # C-08: отказ экстракции не должен измеряться и попадать в реестры 1С/Excel.
         extraction_failed = bool(isinstance(extracted, dict) and extracted.get("_extraction_failed"))
@@ -985,7 +1024,7 @@ class LegalDocPlatformFacade:
                 data=extracted,
                 doc_type=doc_type,
                 raw_ocr_text=raw_text,
-                extraction_method=method if method == "regex_fallback" else "vlm",
+                extraction_method=extraction_method,
                 scan_dpi=scan_dpi,
                 gate_source=gate_source,
                 gate_expected=True,
@@ -1021,6 +1060,7 @@ class LegalDocPlatformFacade:
             "quality_status": quality_status,
             "metrics": doc_eval,
             "measurement_caveats": doc_eval.get("measurement_caveats", {}) if doc_eval else {},
+            "recovered_by_regex": recovered_fields,
             "status": doc_status,
             "errors": [failure_reason] if extraction_failed else [],
             "processed_at": time.strftime("%Y-%m-%d %H:%M:%S")
@@ -1037,6 +1077,15 @@ class LegalDocPlatformFacade:
             f"(Качество: {quality_score}%, {quality_status} | Zero-Trust: {zt_report.status.value})"
         )
         return result
+
+
+    # =========================================================================
+    # 5. ПАКЕТНАЯ ОБРАБОТКА
+    # =========================================================================
+    # Фаза 8.9: process_batch была одной функцией на 232 строки, смешивающей
+    # разбор аргументов, шесть этапов с print(), чекпоинтинг, файловую раскладку
+    # и экспорт Excel. Этапы вынесены в отдельные методы: каждый можно прочитать
+    # и переиспользовать, а оркестратор остаётся обзорным.
 
     def process_batch(
         self,
@@ -1058,9 +1107,31 @@ class LegalDocPlatformFacade:
         print(f" 🚀 SCANREADER {_get_version()}: ПОСЛЕДОВАТЕЛЬНЫЙ КОНВЕЙЕР ОБРАБОТКИ ДОКУМЕНТОВ")
         print("=" * 78)
 
-        # ---------------------------------------------------------------------
-        # [Этап 1/6] Инициализация окружения и проверка модели
-        # ---------------------------------------------------------------------
+        self._batch_stage1_environment()
+
+        target_files, source_info = self._batch_stage2_discover(folder_or_files)
+        if not target_files:
+            print(f"  [ВНИМАНИЕ] Поддерживаемых документов не обнаружено в: {source_info}")
+            return []
+
+        grouped_files = self._batch_stage3_classify(target_files, doc_type)
+        results, errors = self._batch_stage4_extract(grouped_files)
+        if calculate_metrics and results:
+            self._batch_stage5_metrics(grouped_files, results, len(errors))
+        self._batch_stage6_export(results)
+
+        if organize_subfolders:
+            self._batch_stage7_lay_out_files(results)
+
+        print("\n" + "=" * 78)
+        print(" ✅ ВСЕ ЭТАПЫ ОБРАБОТКИ УСПЕШНО ЗАВЕРШЕНЫ!")
+        print(f" • Каталог результатов: {self.results_dir}")
+        print("=" * 78 + "\n")
+
+        return results
+
+    def _batch_stage1_environment(self) -> None:
+        """[Этап 1/6] Инициализация окружения и проверка модели."""
         print("\n[Этап 1/6] Инициализация окружения и проверка VLM/LLM...")
         client = self._get_client()
         if client:
@@ -1068,51 +1139,51 @@ class LegalDocPlatformFacade:
         else:
             print("  [WARN] Клиент не инициализирован. Проверьте .env конфигурацию.")
 
-        # ---------------------------------------------------------------------
-        # [Этап 2/6] Поиск и валидация входящих документов
-        # ---------------------------------------------------------------------
+    @staticmethod
+    def _batch_stage2_discover(folder_or_files: Union[str, List[str]]) -> Tuple[List[str], str]:
+        """[Этап 2/6] Поиск и валидация входящих документов."""
         print("\n[Этап 2/6] Поиск и валидация входящих документов...")
         if isinstance(folder_or_files, str) and os.path.isdir(folder_or_files):
             target_files = scan_directory_for_documents(folder_or_files)
             source_info = f"Папка: {folder_or_files}"
         elif isinstance(folder_or_files, list):
-            target_files = folder_or_files
+            target_files = list(folder_or_files)
             source_info = f"Список файлов ({len(folder_or_files)} шт.)"
         else:
             target_files = [folder_or_files] if os.path.exists(folder_or_files) else []
             source_info = f"Файл: {folder_or_files}"
 
-        if not target_files:
-            print(f"  [ВНИМАНИЕ] Поддерживаемых документов не обнаружено в: {source_info}")
-            return []
+        if target_files:
+            print(f"  • Источник: {source_info}")
+            print(f"  [OK] Найдено документов для обработки: {len(target_files)}")
+        return target_files, source_info
 
-        print(f"  • Источник: {source_info}")
-        print(f"  [OK] Найдено документов для обработки: {len(target_files)}")
-
-        # ---------------------------------------------------------------------
-        # [Этап 3/6] Авто-классификация и роутинг документов
-        # ---------------------------------------------------------------------
+    def _batch_stage3_classify(
+        self,
+        target_files: List[str],
+        doc_type: Optional[str],
+    ) -> Dict[str, List[str]]:
+        """[Этап 3/6] Авто-классификация и роутинг документов по потокам."""
         print("\n[Этап 3/6] Автоматическая классификация и роутинг по потокам...")
         grouped_files: Dict[str, List[str]] = {}
+        explicit_type = str(doc_type) if (doc_type and doc_type != "auto"
+                                          and doc_type in self.registry.ids()) else ""
 
         for f_path in target_files:
-            if doc_type and doc_type != "auto" and doc_type in self.registry.ids():
-                assigned_type = doc_type
-            else:
-                assigned_type, conf, method = self.classify_document(f_path)
-            
-            if assigned_type not in grouped_files:
-                grouped_files[assigned_type] = []
-            grouped_files[assigned_type].append(f_path)
+            assigned_type = explicit_type or self.classify_document(f_path)[0]
+            grouped_files.setdefault(assigned_type, []).append(f_path)
 
         for cat_k, files_list in grouped_files.items():
             pl = self.registry.get(cat_k)
             t_title = pl.title if pl else "Неопределенный документ"
             print(f"   📂 [{cat_k}] {t_title}: {len(files_list)} файлов")
+        return grouped_files
 
-        # ---------------------------------------------------------------------
-        # [Этап 4/6] Специализированная экстракция реквизитов и сумм
-        # ---------------------------------------------------------------------
+    def _batch_stage4_extract(
+        self,
+        grouped_files: Dict[str, List[str]],
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, str]]]:
+        """[Этап 4/6] Специализированная экстракция с чекпоинтингом."""
         print("\n[Этап 4/6] Специализированная экстракция данных (Specialized Branches)...")
         results: List[Dict[str, Any]] = []
         errors: List[Dict[str, str]] = []
@@ -1124,17 +1195,9 @@ class LegalDocPlatformFacade:
 
             checkpoint_file = os.path.join(self.results_dir, f".checkpoint_{cat_k}.json")
             cat_results: List[Dict[str, Any]] = []
-
-            # M-13: возобновление прерванной пакетной обработки по чекпоинту
-            resumed = load_checkpoint(checkpoint_file)
-            if resumed:
-                resumed_names = {r.get("file_name") for r in resumed if isinstance(r, dict)}
-                skipped = [f for f in cat_files if os.path.basename(f) in resumed_names]
-                if skipped:
-                    print(f"    ↩️ Возобновление: {len(skipped)} файлов уже обработаны (чекпоинт), пропускаем.")
-                    cat_results.extend(r for r in resumed if isinstance(r, dict) and r.get("status") != "FAILED")
-                    results.extend(cat_results)
-                cat_files = [f for f in cat_files if os.path.basename(f) not in resumed_names]
+            cat_files = self._resume_from_checkpoint(
+                checkpoint_file, cat_files, cat_results, results
+            )
 
             for idx, f_path in enumerate(cat_files, 1):
                 f_name = os.path.basename(f_path)
@@ -1154,76 +1217,104 @@ class LegalDocPlatformFacade:
                     dur = round(time.perf_counter() - t_start, 2)
                     print(f" [СБОЙ {dur}s: {e}]")
                     logger.error(f"Сбой при обработке {f_path}: {e}")
-                    fail_record = {
+                    results.append({
                         "file_name": f_name,
                         "file_path": f_path,
                         "doc_type": cat_k,
                         "error": str(e),
                         "status": "FAILED",
-                        "processed_at": time.strftime("%Y-%m-%d %H:%M:%S")
-                    }
-                    results.append(fail_record)
+                        "processed_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    })
                     errors.append({"file": f_name, "error": str(e)})
 
             clean_checkpoint(checkpoint_file)
 
-        # ---------------------------------------------------------------------
-        # [Этап 5/6] Контроль качества (Quality Score %) и Guardrails
-        # ---------------------------------------------------------------------
+        return results, errors
+
+    def _resume_from_checkpoint(
+        self,
+        checkpoint_file: str,
+        cat_files: List[str],
+        cat_results: List[Dict[str, Any]],
+        results: List[Dict[str, Any]],
+    ) -> List[str]:
+        """M-13: возобновление прерванной пакетной обработки по чекпоинту."""
+        resumed = load_checkpoint(checkpoint_file)
+        if not resumed:
+            return cat_files
+        resumed_names = {r.get("file_name") for r in resumed if isinstance(r, dict)}
+        skipped = [f for f in cat_files if os.path.basename(f) in resumed_names]
+        if skipped:
+            print(f"    ↩️ Возобновление: {len(skipped)} файлов уже обработаны (чекпоинт), пропускаем.")
+            cat_results.extend(r for r in resumed if isinstance(r, dict) and r.get("status") != "FAILED")
+            results.extend(cat_results)
+        return [f for f in cat_files if os.path.basename(f) not in resumed_names]
+
+    def _batch_stage5_metrics(
+        self,
+        grouped_files: Dict[str, List[str]],
+        results: List[Dict[str, Any]],
+        error_count: int,
+    ) -> None:
+        """[Этап 5/6] Расчет метрик качества и сводный отчет запуска."""
         print("\n" + "=" * 78)
         print("[Этап 5/6] Расчет метрик качества (Quality Score %) и Guardrails...")
-        print(f" • Успешно обработано: {len(results) - len(errors)} | Сбоев: {len(errors)}")
+        print(f" • Успешно обработано: {len(results) - error_count} | Сбоев: {error_count}")
 
         all_category_metrics: Dict[str, Dict[str, Any]] = {}
-        if calculate_metrics and results:
-            for cat_k, cat_files in grouped_files.items():
-                cat_docs = [r for r in results if r.get("doc_type") == cat_k and r.get("status") != "FAILED"]
-                if not cat_docs:
-                    continue
+        for cat_k in grouped_files:
+            cat_docs = [r for r in results if r.get("doc_type") == cat_k and r.get("status") != "FAILED"]
+            if not cat_docs:
+                continue
 
-                gt_data = None
-                pl = self.registry.get(cat_k)
-                if pl:
-                    gt_path = get_ground_truth_path(pl.gt_file)
-                    if gt_path and os.path.exists(gt_path):
-                        try:
-                            with open(gt_path, "r", encoding="utf-8") as gf:
-                                gt_data = json.load(gf)
-                        except Exception:
-                            gt_data = None
+            gt_data = self._load_ground_truth(cat_k)
+            cat_metrics = evaluate_dataset(cat_docs, gt_data, doc_type=cat_k)
+            all_category_metrics[cat_k] = cat_metrics
 
-                cat_metrics = evaluate_dataset(cat_docs, gt_data, doc_type=cat_k)
-                all_category_metrics[cat_k] = cat_metrics
+            export_metrics_json(
+                cat_metrics, os.path.join(self.results_dir, f"{cat_k}_quality_metrics.json")
+            )
 
-                # Сохранение метрик категории в JSON
-                metric_json_name = f"{cat_k}_quality_metrics.json"
-                export_metrics_json(cat_metrics, os.path.join(self.results_dir, metric_json_name))
+            mode_label = "🎯 Ground Truth Benchmark" if gt_data else "🛡️ Autonomous Guardrails"
+            print(f"  📊 [{cat_k}] Среднее качество: {cat_metrics['average_quality_score_percent']}% ({mode_label})")
+            st = cat_metrics.get("status_counts", {})
+            print(f"       🟢 Отлично: {st.get('excellent', 0)} | 🟡 Высокое: {st.get('high', 0)} | "
+                  f"🟠 Удовл.: {st.get('satisfactory', 0)} | 🔴 Внимание: {st.get('needs_attention', 0)}")
 
-                mode_label = "🎯 Ground Truth Benchmark" if gt_data else "🛡️ Autonomous Guardrails"
-                print(f"  📊 [{cat_k}] Среднее качество: {cat_metrics['average_quality_score_percent']}% ({mode_label})")
-                st = cat_metrics.get("status_counts", {})
-                print(f"       🟢 Отлично: {st.get('excellent', 0)} | 🟡 Высокое: {st.get('high', 0)} | 🟠 Удовл.: {st.get('satisfactory', 0)} | 🔴 Внимание: {st.get('needs_attention', 0)}")
+        if all_category_metrics:
+            run_summary = generate_run_summary(all_category_metrics)
+            export_metrics_json(run_summary, os.path.join(self.results_dir, "run_metrics_summary.json"))
+            export_run_summary_markdown(run_summary, os.path.join(self.results_dir, "run_metrics_summary.md"))
+            export_run_summary_excel(run_summary, os.path.join(self.results_dir, "run_metrics_summary.xlsx"))
+            append_to_metrics_history(run_summary, os.path.join(self.results_dir, "metrics_history.json"))
+            print(f"\n  🏆 СВОДНЫЙ QUALITY SCORE ЗАПУСКА: {run_summary['overall_quality_score_percent']}%")
 
-            # Сводный отчет запуска (Run Summary)
-            if all_category_metrics:
-                run_summary = generate_run_summary(all_category_metrics)
-                export_metrics_json(run_summary, os.path.join(self.results_dir, "run_metrics_summary.json"))
-                export_run_summary_markdown(run_summary, os.path.join(self.results_dir, "run_metrics_summary.md"))
-                export_run_summary_excel(run_summary, os.path.join(self.results_dir, "run_metrics_summary.xlsx"))
-                append_to_metrics_history(run_summary, os.path.join(self.results_dir, "metrics_history.json"))
-                print(f"\n  🏆 СВОДНЫЙ QUALITY SCORE ЗАПУСКА: {run_summary['overall_quality_score_percent']}%")
+    def _load_ground_truth(self, cat_k: str) -> Optional[Any]:
+        """Читает эталон категории; при недоступности файла возвращает None."""
+        pl = self.registry.get(cat_k)
+        if not pl:
+            return None
+        gt_path = get_ground_truth_path(pl.gt_file)
+        if not gt_path or not os.path.exists(gt_path):
+            return None
+        try:
+            with open(gt_path, "r", encoding="utf-8") as gf:
+                return json.load(gf)
+        except Exception as e:
+            logger.warning(f"Эталон категории '{cat_k}' не прочитан ({e}); "
+                           "оценка переходит в автономный режим.")
+            return None
 
-        # ---------------------------------------------------------------------
-        # [Этап 6/6] Формирование структурированных JSON-реестров и Excel
-        # ---------------------------------------------------------------------
+    def _batch_stage6_export(self, results: List[Dict[str, Any]]) -> None:
+        """[Этап 6/6] Консолидированные JSON-реестры и сводный Excel."""
         print("\n[Этап 6/6] Формирование консолидированных JSON-реестров...")
         saved_registries = export_consolidated_registries(results, self.results_dir)
         for r_name in saved_registries:
             print(f"  💾 Сохранен реестр: Результаты/{r_name}")
 
-        # Экспорт в сводный Excel
         try:
             from .excel_exporter import LegalExcelExporter
+
             exporter = LegalExcelExporter(output_dir=self.results_dir)
             valid_results = [r for r in results if r.get("status") != "FAILED"]
             if valid_results:
@@ -1232,42 +1323,56 @@ class LegalDocPlatformFacade:
         except Exception as ex:
             logger.warning(f"Excel экспорт пропущен: {ex}")
 
-        # Физическая раскладка по подпапкам при флаге organize_subfolders
-        if organize_subfolders:
-            import shutil
-            print("\n  📂 Физическая раскладка файлов по тематическим папкам...")
-            inc_env = os.getenv("SCANREADER_INCOMING_DIR")
-            if inc_env and os.path.exists(inc_env):
-                inc_root = inc_env
-            elif os.path.exists(os.path.join(os.getcwd(), "incoming")):
-                inc_root = os.path.join(os.getcwd(), "incoming")
-            elif os.path.exists(os.path.join(os.getcwd(), "Входящие_документы")):
-                inc_root = os.path.join(os.getcwd(), "Входящие_документы")
-            elif os.path.exists(os.path.join(ROOT_DIR, "incoming")):
-                inc_root = os.path.join(ROOT_DIR, "incoming")
-            else:
-                inc_root = os.path.join(ROOT_DIR, "Входящие_документы")
-            for item in results:
-                src_path = item.get("file_path")
-                dt = item.get("doc_type") if isinstance(item.get("doc_type"), str) else None
-                pl = self.registry.get(dt) if dt else None
-                if pl and src_path and os.path.exists(src_path):
-                    target_sub = pl.id if os.path.exists(os.path.join(inc_root, pl.id)) or not os.path.exists(os.path.join(inc_root, pl.folder)) else pl.folder
-                    target_folder = os.path.join(inc_root, target_sub)
-                    os.makedirs(target_folder, exist_ok=True)
-                    target_file = os.path.join(target_folder, os.path.basename(src_path))
-                    if os.path.abspath(src_path) != os.path.abspath(target_file):
-                        try:
-                            # H-17: Безопасное копирование вместо разрушительного перемещения
-                            shutil.copy2(src_path, target_file)
-                            item["file_path"] = target_file
-                            print(f"    -> Скопирован: {os.path.basename(src_path)} -> {target_sub}/")
-                        except Exception as e:
-                            logger.warning(f"Не удалось скопировать {src_path}: {e}")
+    def _batch_stage7_lay_out_files(self, results: List[Dict[str, Any]]) -> None:
+        """Физическая раскладка файлов по тематическим папкам.
 
-        print("\n" + "=" * 78)
-        print(" ✅ ВСЕ ЭТАПЫ ОБРАБОТКИ УСПЕШНО ЗАВЕРШЕНЫ!")
-        print(f" • Каталог результатов: {self.results_dir}")
-        print("=" * 78 + "\n")
+        H-17: файлы КОПИРУЮТСЯ, а не перемещаются, чтобы не разрушать
+        исходные данные пользователя.
+        """
+        import shutil
 
-        return results
+        print("\n  📂 Физическая раскладка файлов по тематическим папкам...")
+        inc_root = self._resolve_incoming_root()
+        for item in results:
+            src_path = item.get("file_path")
+            dt = item.get("doc_type") if isinstance(item.get("doc_type"), str) else None
+            pl = self.registry.get(dt) if dt else None
+            if not (pl and src_path and os.path.exists(src_path)):
+                continue
+            target_folder = os.path.join(inc_root, self._target_subfolder(inc_root, pl))
+            os.makedirs(target_folder, exist_ok=True)
+            target_file = os.path.join(target_folder, os.path.basename(src_path))
+            if os.path.abspath(src_path) == os.path.abspath(target_file):
+                continue
+            try:
+                shutil.copy2(src_path, target_file)
+                item["file_path"] = target_file
+                print(f"    -> Скопирован: {os.path.basename(src_path)} -> "
+                      f"{os.path.basename(target_folder)}/")
+            except Exception as e:
+                logger.warning(f"Не удалось скопировать {src_path}: {e}")
+
+    @staticmethod
+    def _resolve_incoming_root() -> str:
+        """Каталог входящих документов: env -> cwd -> корень проекта."""
+        inc_env = os.getenv("SCANREADER_INCOMING_DIR")
+        if inc_env and os.path.exists(inc_env):
+            return inc_env
+        for candidate in (os.path.join(os.getcwd(), "incoming"),
+                          os.path.join(os.getcwd(), "Входящие_документы"),
+                          os.path.join(PROJECT_ROOT, "incoming")):
+            if os.path.exists(candidate):
+                return candidate
+        return os.path.join(PROJECT_ROOT, "Входящие_документы")
+
+    @staticmethod
+    def _target_subfolder(inc_root: str, pl: Any) -> str:
+        """
+        Имя подпапки: pl.id, если такая папка уже есть, иначе pl.folder,
+        если её ещё нет, иначе pl.id (чтобы не смешивать две схемы имён).
+        """
+        id_exists = os.path.exists(os.path.join(inc_root, pl.id))
+        folder_exists = os.path.exists(os.path.join(inc_root, pl.folder))
+        if id_exists or not folder_exists:
+            return pl.id
+        return pl.folder

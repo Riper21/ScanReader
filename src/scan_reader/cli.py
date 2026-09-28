@@ -129,7 +129,6 @@ def handle_run(args: argparse.Namespace) -> int:
         result = facade.process_single_document(
             file_path=str(scan_file),
             doc_type=doc_type_arg,
-            prompt_user_on_unknown=False,
         )
 
         detected_type = result.get("doc_type", "unknown")

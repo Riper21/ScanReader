@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
-from .utils import sanitize_filename, get_logger
+from .utils import as_dict as _as_dict, get_logger, sanitize_filename
 from .io_utils import write_atomic
 
 logger = get_logger("json_exporter")
@@ -34,9 +34,7 @@ REGISTRY_ALIASES = {
 }
 
 
-def _as_dict(val: Any) -> Dict[str, Any]:
-    """Безопасное приведение к dict для полей, которые VLM может вернуть не-словарем (B-03)."""
-    return val if isinstance(val, dict) else {}
+# as_dict импортируется из .utils как _as_dict (Фаза 8.6: было три копии).
 
 
 def format_to_iso_date(date_str: Any) -> str:
@@ -747,12 +745,10 @@ def export_consolidated_registries(
 
 
 if __name__ == "__main__":
-    import sys
-    if hasattr(sys.stdout, "reconfigure"):
-        try:
-            sys.stdout.reconfigure(encoding="utf-8")
-        except (OSError, ValueError) as e:
-            logger.debug(f"Не удалось переконфигурировать stdout в UTF-8: {e}")
+    # Фаза 8.7: третья копия настройки UTF-8 удалена, осталась в core/utils
+    from .utils import setup_console_utf8
+
+    setup_console_utf8()
 
     if len(sys.argv) > 1:
         in_path = sys.argv[1]

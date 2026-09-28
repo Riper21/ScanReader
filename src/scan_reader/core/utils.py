@@ -15,18 +15,39 @@ from typing import Any, Dict
 _module_logger = logging.getLogger("core.utils")
 
 
+def as_dict(val: Any) -> Dict[str, Any]:
+    """
+    Безопасный доступ к вложенным структурам: возвращает словарь или пустой словарь.
+
+    Фаза 8.6: раньше эта однострочная функция была определена в ТРЁХ модулях
+    (verifier/auditor, core/json_exporter, verifier/hallucination_gate). Теперь
+    определение единственное.
+    """
+    return val if isinstance(val, dict) else {}
+
+
 def setup_console_utf8() -> None:
     """
     Кроссплатформенная безопасная настройка UTF-8 для вывода в консоль (Windows/Linux).
+
+    Фаза 8.7: единственная реализация. Раньше таких было три (здесь, в
+    core/io_utils.configure_streams и инлайн в блоке __main__ json_exporter),
+    и вторая вызывала третью на уже перенастроенном потоке.
+
+    Функция идемпотентна и перенастраивает ОБА потока на всех платформах:
+    ограничение sys.platform.startswith("win") было лишним, а на POSIX
+    перенастройка тоже нужна при перенаправлении вывода в файл.
     """
-    if sys.platform.startswith("win"):
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
         try:
-            if hasattr(sys.stdout, "reconfigure"):
-                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-            if hasattr(sys.stderr, "reconfigure"):
-                sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-        except Exception as e:
-            _module_logger.debug(f"Не удалось переконфигурировать консольные потоки в UTF-8: {e}")
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError, AttributeError) as e:
+            # Поток уже использован - перенастройка невозможна, но это не повод
+            # прерывать работу: UTF-8 может быть задан окружением.
+            _module_logger.debug(f"Не удалось переконфигурировать поток в UTF-8: {e}")
 
 
 # Автоматическая инициализация при импорте

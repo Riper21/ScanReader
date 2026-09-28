@@ -164,7 +164,6 @@ class ScanReaderMCPServer:
                 result = self.facade.process_single_document(
                     file_path=file_path,
                     doc_type=doc_type,
-                    prompt_user_on_unknown=False,
                 )
 
                 if arguments.get("verify_zero_trust", True):
