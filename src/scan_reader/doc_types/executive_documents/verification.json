@@ -1,0 +1,51 @@
+{
+  "_comment": "Исполнительный лист. Основной документ принудительного исполнения.",
+  "parties": [
+    {"path": "claimant", "label": "взыскатель", "ids": ["inn", "ogrn"]},
+    {"path": "debtor", "label": "должник", "ids": ["inn", "ogrn"]}
+  ],
+  "identifier_checks": [],
+  "doc_ref_fields": ["blank_number", "base_doc_number"],
+  "money_rules": [
+    {
+      "code": "WRIT_MATH_DISCREPANCY",
+      "doc_hint": "исполнительный лист",
+      "total": ["finances.total_rub"],
+      "components": [
+        ["основной долг", ["finances.main_debt_rub"]],
+        ["проценты и неустойка", ["finances.interest_penalty_rub"]],
+        ["судебные расходы", ["finances.court_fee_rub"]],
+        ["прочее", ["finances.other_rub"]]
+      ],
+      "min_components": 2,
+      "tolerance": 0.05,
+      "severity": "error"
+    }
+  ],
+  "chronology_rules": [
+    {
+      "before": ["act_date|court.act_date"],
+      "after": ["court.issue_date"],
+      "code": "CHRONO_ACT_BEFORE_ISSUE",
+      "message": "Дата акта суда позже даты выдачи исполнительного листа"
+    },
+    {
+      "before": ["court.issue_date|issue_date"],
+      "after": ["doc_date"],
+      "code": "CHRONO_ISSUE_BEFORE_DOC",
+      "message": "Дата выдачи исполнительного листа позже даты самого листа"
+    }
+  ],
+  "gate_fields": [
+    {"path": "finances.total_rub", "min_length": 3},
+    {"path": "finances.main_debt_rub", "min_length": 3},
+    {"path": "claimant.inn", "min_length": 10},
+    {"path": "debtor.inn", "min_length": 10},
+    {"path": "court.name", "min_length": 5},
+    {"path": "court.case_number", "min_length": 5},
+    {"path": "case_number", "min_length": 5},
+    {"path": "blank_number", "min_length": 5}
+  ],
+  "gate_names": ["claimant.name", "debtor.name"],
+  "gate_authorities": ["court.name"]
+}

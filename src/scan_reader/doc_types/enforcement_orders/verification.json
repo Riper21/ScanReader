@@ -1,0 +1,51 @@
+{
+  "_comment": "Заявление о возбуждении ИП и постановление о взыскании на зарплату.",
+  "parties": [
+    {"path": "claimant", "label": "взыскатель", "ids": ["inn", "ogrn"]},
+    {"path": "debtor", "label": "должник", "ids": ["inn", "ogrn"]}
+  ],
+  "identifier_checks": [],
+  "bank": [
+    {
+      "bik": "payment_details.bik",
+      "account": "payment_details.payment_account",
+      "uin": "payment_details.uin",
+      "rosp_code": "payment_details.rosp_code",
+      "kpp": "payment_details.recipient_kpp",
+      "oktmo": "payment_details.oktmo"
+    }
+  ],
+  "money_rules": [
+    {
+      "code": "ENFORCEMENT_MATH_DISCREPANCY",
+      "doc_hint": "приказ ФССП",
+      "total": ["finances.total_rub"],
+      "components": [
+        ["основной долг", ["finances.main_debt_rub"]],
+        ["судебные расходы", ["finances.court_costs_rub"]]
+      ],
+      "min_components": 2,
+      "tolerance": 0.05,
+      "severity": "error"
+    }
+  ],
+  "chronology_rules": [
+    {
+      "before": ["court.act_date|court.issue_date"],
+      "after": ["doc_date"],
+      "code": "CHRONO_ACT_BEFORE_ORDER",
+      "message": "Дата судебного акта позже даты постановления о взыскании"
+    }
+  ],
+  "gate_fields": [
+    {"path": "finances.total_rub", "min_length": 3},
+    {"path": "finances.main_debt_rub", "min_length": 3},
+    {"path": "claimant.inn", "min_length": 10},
+    {"path": "debtor.inn", "min_length": 10},
+    {"path": "ip_number", "min_length": 5},
+    {"path": "reg_number", "min_length": 3},
+    {"path": "court.case_number", "min_length": 5}
+  ],
+  "gate_names": ["claimant.name", "debtor.name"],
+  "gate_authorities": ["fssp.name", "court.name"]
+}

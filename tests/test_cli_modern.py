@@ -25,9 +25,12 @@ def test_cli_parser_subcommands():
 
 def test_cli_verify_subcommand(tmp_path, capsys):
     json_file = tmp_path / "doc.json"
+    # Реквизиты взяты из verification.json плагина salary_deductions: у этого типа
+    # поля «debtor» нет (используется плоское debtor_name), а ИНН получателя
+    # платежа лежит в payment_details.recipient_inn.
     content = {
         "doc_type": "salary_deductions",
-        "debtor": {"inn": "7707083893"},
+        "payment_details": {"recipient_inn": "7707083893"},
         "finances": {"debt_amount_rub": 1000.0, "fee_penalty_rub": 70.0, "total_deduction_rub": 1070.0},
     }
     json_file.write_text(json.dumps(content), encoding="utf-8")
@@ -41,6 +44,8 @@ def test_cli_verify_subcommand(tmp_path, capsys):
     report = json.loads(captured.out.strip())
     assert report["is_valid"] is True
     assert report["status"] == "zero_trust_verified"
+    assert report["details"]["checksums_verified_ok"] >= 1
+    assert report["details"]["math_verified_ok"] is True
 
 
 def test_cli_doctor_subcommand(capsys):

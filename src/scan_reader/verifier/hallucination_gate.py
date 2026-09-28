@@ -8,6 +8,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
+from .spec import get_nested_value
+
 
 def normalize_token(text: str) -> str:
     """Normalize text token for resilient cross-modal matching."""
@@ -148,88 +150,59 @@ def check_presence_in_raw_text(
     return False
 
 
+
 MIN_REFERENCE_LENGTH = 20
 
 
 def audit_cross_modal_consistency(
     extracted_data: Dict[str, Any],
     raw_text: str,
+    spec: Optional[Any] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Audit extracted document fields against the raw OCR layer text.
-    Returns list of discrepancies where critical entities could not be corroborated.
+    Сверяет извлечённые реквизиты с исходным текстом документа.
+
+    Проверяемые поля приходят из VerificationSpec (verification.json плагина).
+    Раньше перечисления были захардкожены (7 путей, из которых девять типов
+    документов оставались вне гейта, а денежные суммы не проверялись вовсе),
+    что нарушало Правило 3 AGENTS.md.
+
+    :param spec: VerificationSpec; если не передана, берётся из реестра по
+        doc_type экстракции, которого здесь нет, поэтому передаётся вызывающим.
     """
     if not raw_text or len(raw_text.strip()) < MIN_REFERENCE_LENGTH:
-        return []  # No raw text layer available to cross-examine
-
+        return []  # Нет эталона для сверки
     if not isinstance(extracted_data, dict):
         return []
 
-    def _as_dict(val: Any) -> Dict[str, Any]:
-        return val if isinstance(val, dict) else {}
+    gate_fields = list(getattr(spec, "gate_fields", None) or [])
+    gate_names = list(getattr(spec, "gate_names", None) or [])
+    gate_authorities = list(getattr(spec, "gate_authorities", None) or [])
 
-    # M-08: нормализация сырого текста и группы цифр вычисляются один раз
+    # M-08: нормализация и группы цифр вычисляются один раз
     norm_raw = normalize_token(raw_text)
     digit_groups = _numeric_atoms(raw_text)
 
-    suspicious = []
-
-    # 1. Числовые реквизиты: ИНН всех сторон, УИН, БИК, счёт, номера дел и ИП.
-    # Раньше перечислялись 7 путей, и почти все плагины оставались вне гейта:
-    # продавец, покупатель, заказчик, подрядчик, доверитель, поверенный, отправитель,
-    # получатель, работник, организация, а также НИ ОДНОЙ денежной суммы —
-    # выдуманный итог проходил беспрепятственно.
-    def _nested(source: Any, *path: str) -> Any:
-        cur: Any = source
-        for part in path:
-            if not isinstance(cur, dict):
-                return None
-            cur = cur.get(part)
-        return cur
-
-    numeric_candidates = [
-        ("debtor.inn", ("debtor", "inn")),
-        ("claimant.inn", ("claimant", "inn")),
-        ("party_one.inn", ("party_one", "inn")),
-        ("party_two.inn", ("party_two", "inn")),
-        ("seller.inn", ("seller", "inn")),
-        ("buyer.inn", ("buyer", "inn")),
-        ("customer.inn", ("customer", "inn")),
-        ("contractor.inn", ("contractor", "inn")),
-        ("principal.inn", ("principal", "inn")),
-        ("agent.inn", ("agent", "inn")),
-        ("sender.inn", ("sender", "inn")),
-        ("recipient.inn", ("recipient", "inn")),
-        ("employee.inn", ("employee", "inn")),
-        ("organization_inn", ("organization_inn",)),
-        ("payment_details.recipient_inn", ("payment_details", "recipient_inn")),
-        ("payment_details.uin", ("payment_details", "uin")),
-        ("payment_details.bik", ("payment_details", "bik")),
-        ("payment_details.payment_account", ("payment_details", "payment_account")),
-        ("payment_details.account", ("payment_details", "account")),
-        ("court.case_number", ("court", "case_number")),
-        ("ip_number", ("ip_number",)),
-        ("reg_number", ("reg_number",)),
-        ("base_doc_number", ("base_doc_number",)),
-        ("blank_number", ("blank_number",)),
-        ("debtor.snils", ("debtor", "snils")),
-        ("employee.snils", ("employee", "snils")),
-        # Денежные суммы: главный вектор выдумывания, ранее не проверялся вовсе
-        ("finances.total_rub", ("finances", "total_rub")),
-        ("finances.total_deduction_rub", ("finances", "total_deduction_rub")),
-        ("finances.main_debt_rub", ("finances", "main_debt_rub")),
-        ("finances.debt_amount_rub", ("finances", "debt_amount_rub")),
-        ("finances.court_fee_rub", ("finances", "court_fee_rub")),
-        ("finances.total_claim_rub", ("finances", "total_claim_rub")),
-    ]
-
+    suspicious: List[Dict[str, Any]] = []
     seen: set = set()
-    for field_path, path in numeric_candidates:
-        val = _nested(extracted_data, *path)
-        if val is None or isinstance(val, bool) or isinstance(val, (dict, list)):
+
+    def _value_of(path: str) -> Any:
+        return get_nested_value(extracted_data, path)
+
+    # 1. Числовые реквизиты и денежные суммы
+    for item in gate_fields:
+        field_path = item["path"] if isinstance(item, dict) else str(item)
+        min_length = int(item.get("min_length", 5)) if isinstance(item, dict) else 5
+        val = _value_of(field_path)
+        if val is None or isinstance(val, (bool, dict, list)):
+            continue
+        # Ноль не несёт идентифицирующей информации и не может быть
+        # «подтверждён» текстом: сумма «0.00 руб.» и отсутствие строки
+        # неразличимы. Проверять такой реквизит бессмысленно.
+        if isinstance(val, (int, float)) and float(val) == 0.0:
             continue
         value = str(val).strip()
-        if len(value) < 5 or value in seen:
+        if len(value) < min_length or value in seen:
             continue
         seen.add(value)
         if not check_presence_in_raw_text(
@@ -241,28 +214,18 @@ def audit_cross_modal_consistency(
                 "reason": f"Value '{value}' not corroborated by raw OCR/text layer",
             })
 
-    # 2. Наименования сторон: фамилия/первый значимый токен.
-    for field_path, path in (
-        ("debtor.name", ("debtor", "name")),
-        ("claimant.name", ("claimant", "name")),
-        ("party_one.name", ("party_one", "name")),
-        ("party_two.name", ("party_two", "name")),
-        ("seller.name", ("seller", "name")),
-        ("buyer.name", ("buyer", "name")),
-        ("customer.name", ("customer", "name")),
-        ("contractor.name", ("contractor", "name")),
-        ("principal.name", ("principal", "name")),
-        ("agent.name", ("agent", "name")),
-        ("sender.name", ("sender", "name")),
-        ("recipient.name", ("recipient", "name")),
-    ):
-        val = _nested(extracted_data, *path)
+    # 2. Наименования сторон: первый значимый токен
+    for field_path in gate_names:
+        val = _value_of(field_path)
         if not val or not isinstance(val, str):
             continue
         tokens = [t for t in re.split(r"[\s,]+", val) if len(t) >= 4]
         if not tokens:
             continue
         surname = tokens[0]
+        if surname in seen:
+            continue
+        seen.add(surname)
         if not check_presence_in_raw_text(
             surname, raw_text, norm_raw=norm_raw, digit_groups=digit_groups
         ):
@@ -272,21 +235,20 @@ def audit_cross_modal_consistency(
                 "reason": f"Party identifier '{surname}' not found in raw OCR/text",
             })
 
-    # 3. Наименование суда и органа при прокуратуре: не менее двух значимых слов
-    for field_path, path in (
-        ("court.name", ("court", "name")),
-        ("fssp.name", ("fssp", "name")),
-        ("authority.name", ("authority", "name")),
-    ):
-        val = _nested(extracted_data, *path)
+    # 3. Наименование суда и органа: отклоняется, только если не подтверждён
+    # НИ ОДИН значимый токен, иначе легальные сокращения дают ложные срабатывания
+    for field_path in gate_authorities:
+        val = _value_of(field_path)
         if not val or not isinstance(val, str):
             continue
         tokens = [t for t in re.split(r"[\s,]+", val) if len(t) >= 4]
-        missing = [
-            t for t in tokens
-            if not check_presence_in_raw_text(t, raw_text, norm_raw=norm_raw, digit_groups=digit_groups)
-        ]
-        if missing and len(missing) == len(tokens):
+        if not tokens:
+            continue
+        confirmed = any(
+            check_presence_in_raw_text(t, raw_text, norm_raw=norm_raw, digit_groups=digit_groups)
+            for t in tokens
+        )
+        if not confirmed:
             suspicious.append({
                 "field": field_path,
                 "extracted_value": val,

@@ -8,6 +8,7 @@ from scan_reader.verifier.hallucination_gate import (
     check_presence_in_raw_text,
     normalize_token,
 )
+from scan_reader.verifier.spec import VerificationSpec
 
 
 def test_normalize_token():
@@ -32,7 +33,14 @@ def test_audit_cross_modal_consistency_detects_hallucination():
         "ip_number": "99999/22/11111-ИП",
     }
 
-    discrepancies = audit_cross_modal_consistency(extracted, raw_ocr)
+    # После Фазы 6 гейт проверяет поля из verification.json плагина, поэтому
+    # здесь передаётся явная спецификация.
+    spec = VerificationSpec({
+        "gate_fields": [{"path": "debtor.inn", "min_length": 10},
+                        {"path": "ip_number", "min_length": 5}],
+        "gate_names": ["debtor.name"],
+    })
+    discrepancies = audit_cross_modal_consistency(extracted, raw_ocr, spec)
     assert len(discrepancies) >= 2
     fields = [d["field"] for d in discrepancies]
     assert "debtor.name" in fields

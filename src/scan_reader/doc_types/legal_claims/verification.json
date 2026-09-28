@@ -1,0 +1,50 @@
+{
+  "_comment": "Досудебная претензия (ст. 395 ГК РФ).",
+  "parties": [
+    {"path": "sender", "label": "отправитель", "ids": ["inn", "ogrn"]},
+    {"path": "recipient", "label": "получатель", "ids": ["inn", "ogrn"]}
+  ],
+  "identifier_checks": [],
+  "bank": [
+    {
+      "bik": "bank_requisites.bik",
+      "account": "bank_requisites.account",
+      "kpp": "bank_requisites.kpp",
+      "oktmo": "bank_requisites.oktmo"
+    }
+  ],
+  "bank_recipient_paths": ["bank_requisites.recipient", "recipient.name"],
+  "freeform_bank_fields": ["bank_requisites"],
+  "money_rules": [
+    {
+      "code": "CLAIM_MATH_DISCREPANCY",
+      "doc_hint": "досудебная претензия",
+      "total": ["finances.total_claim_rub"],
+      "components": [
+        ["основной долг", ["finances.principal_debt_rub"]],
+        ["неустойка", ["finances.penalty_rub"]],
+        ["проценты по ст. 395 ГК", ["finances.interest_rub"]]
+      ],
+      "min_components": 1,
+      "tolerance": 0.05,
+      "severity": "error"
+    }
+  ],
+  "chronology_rules": [
+    {
+      "before": ["contract_basis_date"],
+      "after": ["doc_date"],
+      "code": "CHRONO_CONTRACT_BEFORE_CLAIM",
+      "message": "Дата договора-основания позже даты претензии"
+    }
+  ],
+  "gate_fields": [
+    {"path": "finances.total_claim_rub", "min_length": 3},
+    {"path": "finances.principal_debt_rub", "min_length": 3},
+    {"path": "sender.inn", "min_length": 10},
+    {"path": "recipient.inn", "min_length": 10},
+    {"path": "doc_number", "min_length": 3}
+  ],
+  "gate_names": ["sender.name", "recipient.name"],
+  "gate_authorities": []
+}

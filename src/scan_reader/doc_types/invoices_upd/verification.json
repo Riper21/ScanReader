@@ -1,0 +1,33 @@
+{
+  "_comment": "Универсальный передаточный документ / счет-фактура.",
+  "parties": [
+    {"path": "seller", "label": "продавец", "ids": ["inn"]},
+    {"path": "buyer", "label": "покупатель", "ids": ["inn"]}
+  ],
+  "identifier_checks": [],
+  "money_rules": [
+    {
+      "code": "UPD_MATH_DISCREPANCY",
+      "doc_hint": "УПД / счет-фактура",
+      "total": ["finances.total_rub"],
+      "components": [
+        ["сумма без НДС", ["finances.total_rub_no_vat"]],
+        ["НДС", ["finances.total_vat_rub"]]
+      ],
+      "min_components": 2,
+      "tolerance": 0.05,
+      "severity": "error"
+    }
+  ],
+  "chronology_rules": [],
+  "gate_fields": [
+    {"path": "finances.total_rub", "min_length": 3},
+    {"path": "finances.total_rub_no_vat", "min_length": 3},
+    {"path": "finances.total_vat_rub", "min_length": 3},
+    {"path": "seller.inn", "min_length": 10},
+    {"path": "buyer.inn", "min_length": 10},
+    {"path": "doc_number", "min_length": 3}
+  ],
+  "gate_names": ["seller.name", "buyer.name"],
+  "gate_authorities": []
+}

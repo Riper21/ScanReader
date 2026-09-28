@@ -12,10 +12,14 @@
     flat_columns.json      — маппинг «путь в модели → колонка таблицы»
     benchmark.json         — конфиг бенчмарка против ground truth (метрика + вес поля)
     autonomous.json        — DSL автономных Guardrails-проверок
+    verification.json      — декларация верификации: реквизиты, сверка денег,
+                              хронология, поля кросс-модального гейта
 
-Ядро системы (конвейер, классификатор, экспорт, метрики) НЕ содержит жестко
-зашитых категорий: оно читает реестр через функции этого модуля.
+Ядро системы (конвейер, классификатор, верификатор, экспорт, метрики) НЕ
+содержит жестко зашитых категорий: оно читает реестр через функции этого модуля.
 Добавление нового типа = создание новой папки плагина (см. new_doctype.py).
+Ни verifier/auditor.py, ни core/ не знают ни одного имени поля конкретного типа
+документа — всё приходит из конфигов плагина.
 """
 
 import os
@@ -46,6 +50,11 @@ REQUIRED_PLUGIN_FILES = (
     "benchmark.json",
     "autonomous.json",
 )
+
+# Фаза 6: verification.json — восьмой файл контракта. Необязателен: плагин без
+# него проходит только общие проверки, и это позволяет добавлять новый тип
+# документа простым созданием папки.
+OPTIONAL_PLUGIN_FILES = ("verification.json",)
 
 
 class PluginSpec:
@@ -104,7 +113,24 @@ class PluginSpec:
         self.benchmark_config: Dict[str, Any] = self._load_json("benchmark.json", default={"fields": []})
         self.autonomous_config: Dict[str, Any] = self._load_json("autonomous.json", default={"fields": []})
 
+        # --- Декларация верификации (Фаза 6, Правило 3) ---
+        # Ядро верификатора не знает ни одного имени поля этого типа документа:
+        # они приходят отсюда.
+        from .verifier.spec import load_verification_spec
+
+        self.verification_spec = load_verification_spec(folder_path)
+        spec_problems = self.verification_spec.validate(self.folder_name)
+        if spec_problems:
+            raise ValueError(
+                f"verification.json плагина '{self.folder_name}' некорректен: {'; '.join(spec_problems)}"
+            )
+
         # Нормализация и валидация benchmark.json (C-03)
+        # C-06: тип поля обязан быть из известного словаряря. Раньше проверялся
+        # только непустой path, поэтому «number» проходил загрузку, а оценщик его
+        # не понимал и сравнивал суммы как строки: ошибка в 10 раз давала 98.32%.
+        from .core.metrics_evaluator import KNOWN_FIELD_TYPES
+
         bench_fields = self.benchmark_config.get("fields", [])
         if isinstance(bench_fields, list):
             for idx, item in enumerate(bench_fields):
@@ -115,6 +141,20 @@ class PluginSpec:
                         raise ValueError(
                             f"Элемент #{idx} в benchmark.json плагина '{self.folder_name}' имеет пустой path"
                         )
+                    declared = str(item.get("type", "fuzzy")).strip().lower()
+                    if declared not in KNOWN_FIELD_TYPES:
+                        raise ValueError(
+                            f"Элемент #{idx} в benchmark.json плагина '{self.folder_name}': "
+                            f"неизвестный тип поля '{declared}' для '{item['path']}'. "
+                            f"Допустимо: {', '.join(sorted(KNOWN_FIELD_TYPES))}"
+                        )
+                    try:
+                        float(item.get("weight", 1.0))
+                    except (TypeError, ValueError):
+                        raise ValueError(
+                            f"Элемент #{idx} в benchmark.json плагина '{self.folder_name}': "
+                            f"нечисловой weight {item.get('weight')!r} для '{item['path']}'"
+                        ) from None
 
         # Нормализация и валидация flat_columns.json (C-04)
         if isinstance(self.flat_columns, list):
@@ -221,6 +261,9 @@ class _Registry:
         self.plugins.clear()
         self.load_errors.clear()
         self._enabled_cache = None
+        from .verifier.spec import clear_spec_cache
+
+        clear_spec_cache()
         if not os.path.isdir(DOC_TYPES_DIR):
             return
         for entry in sorted(os.listdir(DOC_TYPES_DIR)):

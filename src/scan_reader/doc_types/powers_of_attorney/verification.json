@@ -1,0 +1,26 @@
+{
+  "_comment": "Доверенность (в том числе удостоверенная нотариусом).",
+  "parties": [
+    {"path": "principal", "label": "доверитель", "ids": ["inn", "ogrn"]},
+    {"path": "agent", "label": "поверенный", "ids": ["inn", "ogrn", "snils"]}
+  ],
+  "identifier_checks": [],
+  "money_rules": [],
+  "chronology_rules": [
+    {
+      "before": ["issue_date"],
+      "after": ["valid_until"],
+      "code": "INVALID_VALIDITY_TERM",
+      "message": "Срок действия доверенности предшествует дате её выдачи",
+      "severity": "error"
+    }
+  ],
+  "gate_fields": [
+    {"path": "principal.inn", "min_length": 10},
+    {"path": "agent.inn", "min_length": 10},
+    {"path": "principal.passport_number", "min_length": 5},
+    {"path": "doc_number", "min_length": 3}
+  ],
+  "gate_names": ["principal.name", "agent.name"],
+  "gate_authorities": []
+}

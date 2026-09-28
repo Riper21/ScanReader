@@ -1,0 +1,62 @@
+{
+  "_comment": "Постановление судебного пристава-исполнителя об обращении взыскания на зарплату.",
+  "parties": [
+    {"path": "payment_details.recipient", "label": "получатель", "ids": []}
+  ],
+  "identifier_checks": [
+    {"path": "payment_details.recipient_inn", "kind": "inn", "severity": "error"},
+    {"path": "employer.inn", "kind": "inn", "severity": "error"}
+  ],
+  "bank": [
+    {
+      "bik": "payment_details.bik",
+      "account": "payment_details.payment_account",
+      "uin": "payment_details.uin",
+      "rosp_code": "payment_details.rosp_code",
+      "kpp": "payment_details.recipient_kpp",
+      "oktmo": "payment_details.oktmo",
+      "recipient_inn": "payment_details.recipient_inn"
+    }
+  ],
+  "bank_recipient_paths": ["payment_details.recipient", "employer.name"],
+  "doc_ref_fields": ["base_doc_number", "doc_number"],
+  "money_rules": [
+    {
+      "code": "SALARY_DISCREPANCY",
+      "doc_hint": "удержание из заработной платы",
+      "total": ["finances.total_deduction_rub|finances.total_rub"],
+      "components": [
+        ["основной долг", ["finances.debt_amount_rub"]],
+        ["удержания", ["finances.fee_penalty_rub"]]
+      ],
+      "min_components": 2,
+      "tolerance": 0.05,
+      "severity": "error"
+    }
+  ],
+  "deduction_limit": {
+    "path": "finances.deduction_percentage|deduction_percentage",
+    "basis_fields": ["claim_subject"],
+    "severity": "error"
+  },
+  "chronology_rules": [
+    {
+      "before": ["base_doc_date|court.act_date"],
+      "after": ["doc_date|ip_date"],
+      "code": "CHRONO_BASE_BEFORE_ORDER",
+      "message": "Дата документа-основания позже даты постановления"
+    }
+  ],
+  "gate_fields": [
+    {"path": "finances.total_deduction_rub", "min_length": 3},
+    {"path": "finances.debt_amount_rub", "min_length": 3},
+    {"path": "payment_details.recipient_inn", "min_length": 10},
+    {"path": "payment_details.bik", "min_length": 8},
+    {"path": "payment_details.uin", "min_length": 20},
+    {"path": "ip_number", "min_length": 5},
+    {"path": "base_doc_number", "min_length": 5},
+    {"path": "doc_number", "min_length": 3}
+  ],
+  "gate_names": ["debtor_name", "claimant_name"],
+  "gate_authorities": ["authority.name"]
+}

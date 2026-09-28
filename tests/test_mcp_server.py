@@ -22,13 +22,16 @@ def test_mcp_list_tools():
 
 def test_mcp_call_verify_legal_data():
     server = ScanReaderMCPServer()
+    # Реквизиты соответствуют verification.json плагина salary_deductions.
     sample_data = {
-        "debtor": {"inn": "7707083893"},
+        "payment_details": {"recipient_inn": "7707083893"},
         "finances": {"debt_amount_rub": 1000.0, "fee_penalty_rub": 70.0, "total_deduction_rub": 1070.0},
     }
     result = server.call_tool("verify_legal_data", {"data": sample_data, "doc_type": "salary_deductions"})
     assert result.get("is_valid") is True
     assert result.get("status") == "zero_trust_verified"
+    assert result["details"]["checksums_verified_ok"] >= 1
+    assert result["details"]["math_verified_ok"] is True
 
 
 def test_mcp_jsonrpc_protocol():

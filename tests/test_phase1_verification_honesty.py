@@ -16,6 +16,56 @@ from scan_reader.verifier import VerificationStatus
 from scan_reader.verifier.auditor import ZeroTrustAuditor, _first_present
 
 # Эталонный текст, НЕ содержащий проверяемых реквизитов
+# Фикстуры проверяют МЕХАНИКУ аудитора, поэтому задают собственную спецификацию:
+# после Фазы 6 ядро не знает ни одного имени поля конкретного типа документа.
+SALARY_SPEC = {
+    "parties": [{"path": "debtor", "label": "должник", "ids": ["inn"]},
+                {"path": "claimant", "label": "взыскатель", "ids": ["inn"]}],
+    "identifier_checks": [],
+    "money_rules": [{
+        "code": "SALARY_DISCREPANCY",
+        "total": ["finances.total_deduction_rub"],
+        "components": [["долг", ["finances.debt_amount_rub"]],
+                       ["удержания", ["finances.fee_penalty_rub"]]],
+        "min_components": 2, "tolerance": 0.05, "severity": "error",
+    }],
+    "deduction_limit": {"path": "finances.deduction_percentage", "basis_fields": ["claim_subject"]},
+    "gate_fields": [
+        {"path": "debtor.inn", "min_length": 10},
+        {"path": "claimant.inn", "min_length": 10},
+        {"path": "court.case_number", "min_length": 5},
+        {"path": "finances.total_deduction_rub", "min_length": 3},
+        {"path": "finances.total_rub", "min_length": 3},
+    ],
+    "gate_names": ["debtor.name", "claimant.name"],
+    "gate_authorities": ["court.name"],
+}
+
+def _spec():
+    """Спецификация для тестов механики аудитора (не привязана к реестру)."""
+    from scan_reader.verifier.spec import VerificationSpec
+
+    return VerificationSpec(SALARY_SPEC)
+
+
+def _exec_spec():
+    """Спецификация типа «исполнительный лист» для проверок денежных сверок."""
+    from scan_reader.verifier.spec import VerificationSpec
+
+    return VerificationSpec({
+        "money_rules": [{
+            "code": "WRIT_MATH_DISCREPANCY",
+            "doc_hint": "исполнительный лист",
+            "total": ["finances.total_rub"],
+            "components": [["основной долг", ["finances.main_debt_rub"]],
+                           ["проценты и неустойка", ["finances.interest_penalty_rub"]],
+                           ["судебные расходы", ["finances.court_fee_rub"]],
+                           ["прочее", ["finances.other_rub"]]],
+            "min_components": 2, "tolerance": 0.05, "severity": "error",
+        }],
+    })
+
+
 RAW_UNRELATED = (
     "Постановление о взыскании задолженности в пользу взыскателя "
     "от 01.01.2024 номер 99-АБ"
@@ -34,8 +84,7 @@ def test_c01_fabricated_requisites_are_discrepancy_not_verified():
         "debtor": {"inn": "7707083893", "name": "Иванов Иван"},
         "court": {"case_number": "А40-99999/2099"},
     }
-    report = ZeroTrustAuditor.audit_document(
-        data=data, doc_type="salary_deductions", raw_ocr_text=RAW_UNRELATED
+    report = ZeroTrustAuditor.audit_document(spec=_spec(), data=data, doc_type="salary_deductions", raw_ocr_text=RAW_UNRELATED
     )
 
     assert report.is_valid is False
@@ -55,8 +104,7 @@ def test_c01_corroborated_requisites_pass_the_gate():
         "debtor": {"inn": "7707083893", "name": "Иванов Иван"},
         "court": {"case_number": "А40-12345/2019"},
     }
-    report = ZeroTrustAuditor.audit_document(
-        data=data, doc_type="salary_deductions", raw_ocr_text=raw
+    report = ZeroTrustAuditor.audit_document(spec=_spec(), data=data, doc_type="salary_deductions", raw_ocr_text=raw
     )
     assert report.is_valid is True
     assert not [i for i in report.issues if i.code == "HALLUCINATION_RISK"]
@@ -91,8 +139,7 @@ def test_c03_single_number_is_not_zero_trust_verified():
 
     До исправления: zero_trust_verified (проверка фактически не выполнялась).
     """
-    report = ZeroTrustAuditor.audit_document(
-        data={"finances": {"total_rub": 1000.0}},
+    report = ZeroTrustAuditor.audit_document(spec=_spec(), data={"finances": {"total_rub": 1000.0}},
         doc_type="salary_deductions",
         raw_ocr_text=RAW_UNRELATED,
     )
@@ -107,8 +154,7 @@ def test_c03_single_number_is_not_zero_trust_verified():
 
 def test_c03_single_number_present_in_text_is_verified_math_wise():
     """Число, реально присутствующее в тексте, проходит гейт, но не даёт verified."""
-    report = ZeroTrustAuditor.audit_document(
-        data={"finances": {"total_rub": 1000.0}},
+    report = ZeroTrustAuditor.audit_document(spec=_spec(), data={"finances": {"total_rub": 1000.0}},
         doc_type="salary_deductions",
         raw_ocr_text="Судебный приказ о взыскании 1000 рублей в пользу взыскателя.",
     )
@@ -119,8 +165,7 @@ def test_c03_single_number_present_in_text_is_verified_math_wise():
 
 def test_c03_full_reconciliation_yields_zero_trust_verified():
     """Полная сверка + успешные контрольные суммы + выполненный гейт."""
-    report = ZeroTrustAuditor.audit_document(
-        data=_fully_consistent_doc(),
+    report = ZeroTrustAuditor.audit_document(spec=_spec(), data=_fully_consistent_doc(),
         doc_type="salary_deductions",
         raw_ocr_text=RAW_CONSISTENT,
         gate_source="text_layer",
@@ -133,8 +178,7 @@ def test_c03_full_reconciliation_yields_zero_trust_verified():
 
 def test_c02_gate_not_executed_when_reference_unavailable():
     """Документ передан, эталон недоступен — статус обязан отличаться от verified."""
-    report = ZeroTrustAuditor.audit_document(
-        data=_fully_consistent_doc(),
+    report = ZeroTrustAuditor.audit_document(spec=_spec(), data=_fully_consistent_doc(),
         doc_type="salary_deductions",
         raw_ocr_text=None,
         gate_expected=True,
@@ -146,15 +190,16 @@ def test_c02_gate_not_executed_when_reference_unavailable():
 
 def test_c02_standalone_verify_without_document_is_normal():
     """Аудит готового JSON без документа — штатный случай, не отказ."""
-    report = ZeroTrustAuditor.audit_document(
-        data=_fully_consistent_doc(), doc_type="salary_deductions"
+    report = ZeroTrustAuditor.audit_document(spec=_spec(), data=_fully_consistent_doc(), doc_type="salary_deductions"
     )
     assert report.status == VerificationStatus.ZERO_TRUST_VERIFIED
     assert not [i for i in report.issues if i.code == "GATE_NOT_EXECUTED"]
 
 def test_c03_executive_documents_no_longer_reports_bogus_verification():
-    """Исполнительные листы: 4 слагаемых не сверяются (C-04), но verified быть не может."""
+    """Исполнительные листы: 4 слагаемых сверяются (Фаза 3.1), и подмена итога
+    обязана обнаруживаться."""
     report = ZeroTrustAuditor.audit_document(
+        spec=_exec_spec(),
         data={
             "finances": {
                 "main_debt_rub": 157611.62,
@@ -166,6 +211,7 @@ def test_c03_executive_documents_no_longer_reports_bogus_verification():
         raw_ocr_text=RAW_UNRELATED,
     )
     assert report.status != VerificationStatus.ZERO_TRUST_VERIFIED
+    assert "WRIT_MATH_DISCREPANCY" in [i.code for i in report.issues if i.severity == "error"]
 
 
 # =========================================================================
@@ -183,8 +229,7 @@ def test_c05_first_present_keeps_legitimate_zero():
 
 def test_c05_all_zero_amounts_still_reconciled():
     """Раньше сверка не выполнялась и отчёт молчал об этом."""
-    report = ZeroTrustAuditor.audit_document(
-        data={
+    report = ZeroTrustAuditor.audit_document(spec=_spec(), data={
             "finances": {
                 "debt_amount_rub": 0.0,
                 "fee_penalty_rub": 0.0,
@@ -199,8 +244,7 @@ def test_c05_all_zero_amounts_still_reconciled():
 
 
 def test_c05_zero_state_fee_is_reconciled():
-    report = ZeroTrustAuditor.audit_document(
-        data={
+    report = ZeroTrustAuditor.audit_document(spec=_spec(), data={
             "finances": {
                 "debt_amount_rub": 50000.0,
                 "fee_penalty_rub": 0.0,
@@ -215,8 +259,7 @@ def test_c05_zero_state_fee_is_reconciled():
 
 def test_c05_lone_total_is_reported_as_incomplete():
     """Нет компонентов — сверка невозможна, и это должно быть видно."""
-    report = ZeroTrustAuditor.audit_document(
-        data={"finances": {"total_deduction_rub": 0.0}},
+    report = ZeroTrustAuditor.audit_document(spec=_spec(), data={"finances": {"total_deduction_rub": 0.0}},
         doc_type="salary_deductions",
         raw_ocr_text=RAW_UNRELATED,
     )
@@ -236,8 +279,7 @@ def test_c05_lone_total_is_reported_as_incomplete():
     ],
 )
 def test_alimony_basis_recognised_by_wording(subject):
-    report = ZeroTrustAuditor.audit_document(
-        data={
+    report = ZeroTrustAuditor.audit_document(spec=_spec(), data={
             "finances": {
                 "debt_amount_rub": 100.0,
                 "fee_penalty_rub": 0.0,
@@ -253,8 +295,7 @@ def test_alimony_basis_recognised_by_wording(subject):
 
 
 def test_deduction_above_70_percent_is_error():
-    report = ZeroTrustAuditor.audit_document(
-        data={
+    report = ZeroTrustAuditor.audit_document(spec=_spec(), data={
             "finances": {
                 "debt_amount_rub": 100.0,
                 "fee_penalty_rub": 0.0,
@@ -271,8 +312,7 @@ def test_deduction_above_70_percent_is_error():
 
 
 def test_deduction_70_without_basis_is_flagged_for_review():
-    report = ZeroTrustAuditor.audit_document(
-        data={
+    report = ZeroTrustAuditor.audit_document(spec=_spec(), data={
             "finances": {
                 "debt_amount_rub": 100.0,
                 "fee_penalty_rub": 0.0,

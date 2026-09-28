@@ -156,9 +156,13 @@ def test_ocr_can_be_disabled_by_env(monkeypatch):
 # Честная маркировка источника в отчёте
 # =========================================================================
 RAW_REAL = "Постановление о взыскании в пользу ООО Ромашка, ИНН 7707083893, 150000 рублей"
+# Реквизиты берутся из verification.json плагина salary_deductions: поле
+# finances.total_rub у этого типа не проверяется гейтом, зато проверяется
+# total_deduction_rub.
 DOC_REAL = {
-    "debtor": {"inn": "7707083893", "name": "ООО Ромашка"},
-    "finances": {"total_rub": 150000.0},
+    "payment_details": {"recipient_inn": "7707083893"},
+    "employer": {"name": "ООО Ромашка"},
+    "finances": {"total_deduction_rub": 150000.0},
 }
 
 
@@ -208,7 +212,7 @@ def test_fabricated_amount_is_still_rejected():
     )
     assert report.status == VerificationStatus.DISCREPANCY_DETECTED
     assert any(
-        i.code == "HALLUCINATION_RISK" and i.field_name == "finances.total_rub"
+        i.code == "HALLUCINATION_RISK" and i.field_name == "finances.total_deduction_rub"
         for i in report.issues
     )
 

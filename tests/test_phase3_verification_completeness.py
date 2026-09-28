@@ -136,7 +136,7 @@ def test_c04_enforcement_order_reconciled_once():
         {"main_debt_rub": 50000.0, "court_costs_rub": 6000.0, "total_rub": 99999.0},
         "enforcement_orders",
     )
-    assert "WRIT_MATH_DISCREPANCY" in _codes(report)
+    assert "ENFORCEMENT_MATH_DISCREPANCY" in _codes(report)
     math_issues = [i for i in report.issues if i.code.endswith("MATH_DISCREPANCY")]
     assert len(math_issues) == 1, f"ожидалась одна ошибка сверки, получено {len(math_issues)}"
 

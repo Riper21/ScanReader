@@ -16,6 +16,7 @@ from scan_reader.verifier.hallucination_gate import (
     check_presence_in_raw_text,
     normalize_token,
 )
+from scan_reader.verifier.spec import VerificationSpec
 
 RAW = (
     "Судебный приказ. Взыскать с Иванова Ивана Ивановича, ИНН 7707083893, "
@@ -23,9 +24,72 @@ RAW = (
     "счет 30101810400000000225, БИК 044525225, сумму 100 рублей."
 )
 
+# После Фазы 6 гейт проверяет поля, объявленные в verification.json плагина.
+# Тесты механики гейта строят собственную спецификацию.
+_SPEC = VerificationSpec({
+    "parties": [{"path": "debtor", "label": "должник", "ids": ["inn", "snils"]},
+                {"path": "claimant", "label": "взыскатель", "ids": ["inn"]},
+                {"path": "party_one", "label": "сторона 1", "ids": ["inn"]},
+                {"path": "party_two", "label": "сторона 2", "ids": ["inn"]},
+                {"path": "seller", "label": "продавец", "ids": ["inn"]},
+                {"path": "buyer", "label": "покупатель", "ids": ["inn"]},
+                {"path": "customer", "label": "заказчик", "ids": ["inn"]},
+                {"path": "contractor", "label": "исполнитель", "ids": ["inn"]},
+                {"path": "principal", "label": "доверитель", "ids": ["inn"]},
+                {"path": "agent", "label": "поверенный", "ids": ["inn"]},
+                {"path": "sender", "label": "отправитель", "ids": ["inn"]},
+                {"path": "recipient", "label": "получатель", "ids": ["inn"]},
+                {"path": "employee", "label": "работник", "ids": ["inn", "snils"]}],
+    "identifier_checks": [{"path": "organization_inn", "kind": "inn"}],
+    "bank": [{"bik": "payment_details.bik", "account": "payment_details.payment_account",
+              "uin": "payment_details.uin", "rosp_code": "payment_details.rosp_code",
+              "kpp": "payment_details.recipient_kpp", "oktmo": "payment_details.oktmo",
+              "recipient_inn": "payment_details.recipient_inn"}],
+    "gate_fields": [{"path": "finances.total_rub", "min_length": 3},
+                    {"path": "finances.total_deduction_rub", "min_length": 3},
+                    {"path": "finances.main_debt_rub", "min_length": 3},
+                    {"path": "finances.debt_amount_rub", "min_length": 3},
+                    {"path": "finances.court_fee_rub", "min_length": 3},
+                    {"path": "finances.total_claim_rub", "min_length": 3},
+                    {"path": "organization_inn", "min_length": 10},
+                    {"path": "debtor.inn", "min_length": 10},
+                    {"path": "claimant.inn", "min_length": 10},
+                    {"path": "party_one.inn", "min_length": 10},
+                    {"path": "party_two.inn", "min_length": 10},
+                    {"path": "seller.inn", "min_length": 10},
+                    {"path": "buyer.inn", "min_length": 10},
+                    {"path": "customer.inn", "min_length": 10},
+                    {"path": "contractor.inn", "min_length": 10},
+                    {"path": "principal.inn", "min_length": 10},
+                    {"path": "agent.inn", "min_length": 10},
+                    {"path": "sender.inn", "min_length": 10},
+                    {"path": "recipient.inn", "min_length": 10},
+                    {"path": "employee.inn", "min_length": 10},
+                    {"path": "debtor.snils", "min_length": 11},
+                    {"path": "employee.snils", "min_length": 11},
+                    {"path": "payment_details.recipient_inn", "min_length": 10},
+                    {"path": "payment_details.uin", "min_length": 20},
+                    {"path": "payment_details.bik", "min_length": 8},
+                    {"path": "payment_details.payment_account", "min_length": 20},
+                    {"path": "payment_details.account", "min_length": 20},
+                    {"path": "court.case_number", "min_length": 5},
+                    {"path": "ip_number", "min_length": 5},
+                    {"path": "reg_number", "min_length": 3},
+                    {"path": "base_doc_number", "min_length": 5},
+                    {"path": "blank_number", "min_length": 5}],
+    "gate_names": ["debtor.name", "claimant.name", "party_one.name", "party_two.name",
+                   "seller.name", "buyer.name", "customer.name", "contractor.name",
+                   "principal.name", "agent.name", "sender.name", "recipient.name",
+                   "employee.full_name"],
+    "gate_authorities": ["court.name", "fssp.name", "authority.name"],
+})
+
+
+def _spec():
+    return _SPEC
 
 def _fields(raw=RAW, **kwargs):
-    return {d["field"] for d in audit_cross_modal_consistency(kwargs, raw)}
+    return {d["field"] for d in audit_cross_modal_consistency(kwargs, raw, _spec())}
 
 
 # =========================================================================
@@ -156,7 +220,7 @@ def test_corroborated_document_produces_no_findings():
         "payment_details": {"bik": "044525225", "payment_account": "30101810400000000225"},
         "finances": {"total_rub": 100.0},
     }
-    assert audit_cross_modal_consistency(doc, RAW) == []
+    assert audit_cross_modal_consistency(doc, RAW, _spec()) == []
 
 
 def test_ocr_damage_single_letter_is_tolerated():
@@ -171,13 +235,13 @@ def test_ocr_damage_single_letter_is_tolerated():
 def test_short_reference_returns_nothing():
     short = "текст"
     assert len(short) < MIN_REFERENCE_LENGTH
-    assert audit_cross_modal_consistency({"debtor": {"inn": "7707083890"}}, short) == []
+    assert audit_cross_modal_consistency({"debtor": {"inn": "7707083890"}}, short, _spec()) == []
 
 
 def test_empty_reference_returns_nothing():
-    assert audit_cross_modal_consistency({"debtor": {"inn": "7707083890"}}, "") == []
+    assert audit_cross_modal_consistency({"debtor": {"inn": "7707083890"}}, "", _spec()) == []
 
 
 def test_non_dict_payload_is_handled():
-    assert audit_cross_modal_consistency("строка", RAW) == []
-    assert audit_cross_modal_consistency(None, RAW) == []
+    assert audit_cross_modal_consistency("строка", RAW, _spec()) == []
+    assert audit_cross_modal_consistency(None, RAW, _spec()) == []

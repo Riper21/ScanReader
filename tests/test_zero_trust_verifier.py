@@ -140,15 +140,16 @@ def test_chronology_verification():
 
 
 def test_zero_trust_auditor_full():
+    # Реквизиты соответствуют verification.json плагина salary_deductions: у этого
+    # типа нет вложенного «debtor» (используется плоское debtor_name), а ИНН
+    # получателя платежа лежит в payment_details.recipient_inn.
     sample_doc = {
         "court": {
             "act_date": "10.03.2021",
             "issue_date": "15.03.2021",
         },
-        "debtor": {
-            "name": "Иванов Иван Иванович",
-            "inn": "7707083893",
-        },
+        "debtor_name": "Иванов Иван Иванович",
+        "payment_details": {"recipient_inn": "7707083893"},
         "finances": {
             "debt_amount_rub": 50000.0,
             "fee_penalty_rub": 3500.0,
@@ -162,6 +163,8 @@ def test_zero_trust_auditor_full():
     assert report.is_valid is True
     assert report.status == VerificationStatus.ZERO_TRUST_VERIFIED
     assert report.has_errors is False
+    assert report.details["checksums_verified_ok"] >= 1
+    assert report.details["math_verified_ok"] is True
 
 
 def test_zero_trust_auditor_on_upd_and_claims():
@@ -178,6 +181,8 @@ def test_zero_trust_auditor_on_upd_and_claims():
     rep_upd = ZeroTrustAuditor.audit_document(upd_valid, doc_type="invoices_upd")
     assert rep_upd.is_valid is True
     assert rep_upd.status == VerificationStatus.ZERO_TRUST_VERIFIED
+    assert rep_upd.details["checksums_verified_ok"] >= 1
+    assert rep_upd.details["math_verified_ok"] is True
 
     # 2. Math discrepancy in UPD
     upd_bad_math = {

@@ -1,0 +1,27 @@
+{
+  "_comment": "Кадровые приказы: Т-1, Т-5, Т-6, Т-8.",
+  "parties": [
+    {"path": "employee", "label": "работник", "ids": ["inn", "snils"]}
+  ],
+  "identifier_checks": [
+    {"path": "organization_inn", "kind": "inn", "severity": "error"}
+  ],
+  "money_rules": [],
+  "chronology_rules": [
+    {
+      "before": ["effective_date_from"],
+      "after": ["effective_date_to"],
+      "code": "CHRONO_FROM_BEFORE_TO",
+      "message": "Дата начала действия приказа позже даты его окончания"
+    }
+  ],
+  "gate_fields": [
+    {"path": "organization_inn", "min_length": 10},
+    {"path": "employee.inn", "min_length": 10},
+    {"path": "employee.snils", "min_length": 11},
+    {"path": "doc_number", "min_length": 3},
+    {"path": "employee.salary_rub", "min_length": 3}
+  ],
+  "gate_names": ["employee.full_name", "director_signatory"],
+  "gate_authorities": []
+}

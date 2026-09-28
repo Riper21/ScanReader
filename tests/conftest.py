@@ -59,6 +59,37 @@ def _reset_singletons():
 
 
 @pytest.fixture
+def make_spec():
+    """
+    Фабрика VerificationSpec для юнит-тестов аудитора и гейта.
+
+    После Фазы 6 ядро не знает ни одного имени поля конкретного типа документа:
+    проверяемые пути приходят из verification.json плагина. Тесты механики
+    аудитора строят собственную спецификацию, а тесты плагинов читают реальную
+    через plugin.verification_spec.
+    """
+    from scan_reader.verifier.spec import VerificationSpec
+
+    def _factory(**kwargs):
+        return VerificationSpec(kwargs)
+
+    return _factory
+
+
+@pytest.fixture
+def spec_for():
+    """Спецификация конкретного типа документа из реального реестра."""
+    from scan_reader.type_registry import get_registry
+
+    def _factory(doc_type):
+        plugin = get_registry().get(doc_type)
+        assert plugin is not None, f"плагин '{doc_type}' не найден"
+        return plugin.verification_spec
+
+    return _factory
+
+
+@pytest.fixture
 def sample_enforcement_order_data():
     return {
         "file_name": "test_order.jpg",
