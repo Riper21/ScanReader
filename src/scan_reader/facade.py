@@ -1019,7 +1019,8 @@ class LegalDocPlatformFacade:
         # Атомарное сохранение индивидуального JSON в Результаты/
         out_path = save_single_document_json(result, self.results_dir)
         # Обновление консолидированных JSON реестров
-        export_consolidated_registries([result], self.results_dir)
+        # C-07: одиночная обработка сливается с накопленным реестром, а не затирает его
+        export_consolidated_registries([result], self.results_dir, merge=True)
 
         logger.info(
             f"✅ Обработка завершена: {base_name} -> {out_path} "

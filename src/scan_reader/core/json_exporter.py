@@ -15,6 +15,7 @@ import os
 import sys
 import re
 import json
+import time
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
@@ -539,9 +540,87 @@ def clean_checkpoint(checkpoint_path: str):
             logger.debug(f"Не удалось удалить чекпоинт '{checkpoint_path}': {e}")
 
 
+def _result_identity(doc_item: Dict[str, Any]) -> str:
+    """
+    Ключ уникальности записи реестра.
+
+    Полный путь предпочтительнее имени файла: два документа с одинаковым именем
+    в разных папках остаются разными записями. Повторная обработка того же файла
+    обновляет существующую запись, а не плодит дубли.
+    """
+    path = str(doc_item.get("file_path") or "").strip()
+    name = str(doc_item.get("file_name") or "").strip()
+    doc_type = str(doc_item.get("doc_type") or "unknown")
+    return f"{path or name}||{doc_type}"
+
+
+def _merge_with_existing_results(
+    results: List[Dict[str, Any]],
+    results_dir: str,
+) -> List[Dict[str, Any]]:
+    """
+    C-07: слияние с уже накопленным реестром вместо полной перезаписи.
+
+    Раньше process_single_document вызывал export_consolidated_registries([result], ...),
+    а функция писала переданный список целиком через write_atomic. Обработка одного
+    файла в одиночном режиме (CLI run, MCP scan_document) уничтожала реестр,
+    накопленный предыдущими запусками.
+
+    Единый источник правды — Registry_Full.json: он хранит исходные result-записи,
+    из которых выводятся все остальные реестры. Поэтому достаточно слить один раз.
+    """
+    registry_path = os.path.join(results_dir, "Registry_Full.json")
+    if not os.path.exists(registry_path):
+        return list(results)
+
+    try:
+        with open(registry_path, "r", encoding="utf-8") as fh:
+            previous = json.load(fh)
+    except Exception as e:
+        # Нечитаемый реестр не должен приводить ни к потере новых, ни к молчаливой
+        # замене старых данных: отводим его в сторону с явным следом.
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        backup = f"{registry_path}.corrupt_{stamp}.bak"
+        try:
+            os.replace(registry_path, backup)
+            logger.warning(
+                f"Реестр '{registry_path}' не читается ({e}); перемещен в '{backup}', "
+                "создаётся заново из текущих результатов."
+            )
+        except Exception as be:
+            logger.error(f"Не удалось сохранить нечитаемый реестр '{registry_path}': {be}")
+        return list(results)
+
+    if not isinstance(previous, list):
+        logger.warning(
+            f"Формат реестра '{registry_path}' неожидан ({type(previous).__name__}); "
+            "используются только текущие результаты."
+        )
+        return list(results)
+
+    merged: List[Dict[str, Any]] = [r for r in previous if isinstance(r, dict)]
+    position = {_result_identity(r): i for i, r in enumerate(merged)}
+
+    for rec in results:
+        if not isinstance(rec, dict):
+            continue
+        key = _result_identity(rec)
+        if key in position:
+            merged[position[key]] = rec
+        else:
+            position[key] = len(merged)
+            merged.append(rec)
+
+    logger.info(
+        f"Реестр слит с существующим: {len(previous)} + {len(results)} -> {len(merged)} записей."
+    )
+    return merged
+
+
 def export_consolidated_registries(
     results: List[Dict[str, Any]],
-    results_dir: str
+    results_dir: str,
+    merge: bool = False,
 ) -> Dict[str, str]:
     """
     Формирует консолидированные структурированные JSON-реестры с атомарной записью (H-03):
@@ -552,24 +631,36 @@ def export_consolidated_registries(
     - all_documents_registry.json
     Также сохраняет отдельные карточки в папку 1C_Импорт/ для зарплатных документов.
     Возвращает словарь {имя_файла: абсолютный_путь}.
+
+    :param merge: True — слить с уже накопленным реестром в results_dir вместо
+        полной перезаписи (C-07). Используется в одиночной обработке документа.
+        False — полная перезапись, как в пакетном режиме, где передан полный набор.
     """
     os.makedirs(results_dir, exist_ok=True)
     saved_files: Dict[str, str] = {}
+
+    if merge:
+        results = _merge_with_existing_results(results, results_dir)
+
+    # C-08: фильтрация выполняется ОДИН раз здесь, до формирования любого выхода.
+    # Раньше проверка стояла только в цикле группировки, а Registry_Full.json писался
+    # из сырого results в обход неё, поэтому отказавшиеся записи всё равно попадали
+    # в полный реестр.
+    results = [
+        item for item in results
+        if isinstance(item, dict)
+        and item.get("status") != "FAILED"
+        and not (
+            isinstance(item.get("data"), dict)
+            and item["data"].get("_extraction_failed")
+        )
+    ]
 
     # 1. Группировка по типам документов
     by_category: Dict[str, List[Dict[str, Any]]] = {}
     all_clean_docs: List[Dict[str, Any]] = []
 
     for item in results:
-        # C-08: сбойные записи исключаются БЕЗУСЛОВНО. Условие `and "data" not in item`
-        # делало фильтр холостым для любой записи, у которой ключ "data" присутствует,
-        # а в него как раз и клался payload-отказ экстракции.
-        if item.get("status") == "FAILED":
-            continue
-        data_block = item.get("data")
-        if isinstance(data_block, dict) and data_block.get("_extraction_failed"):
-            continue
-
         doc_type = item.get("doc_type", "unknown")
         clean_doc = normalize_doc_data(item)
         all_clean_docs.append(clean_doc)
@@ -632,7 +723,7 @@ def export_consolidated_registries(
     except Exception as e:
         logger.warning(f"Не удалось записать 'Registry_Full.json': {e}")
 
-    flat_list = [convert_to_flat_1c(item) for item in results if item.get("status") != "FAILED"]
+    flat_list = [convert_to_flat_1c(item) for item in results]
     registry_flat_path = os.path.join(results_dir, "Registry_Flat.json")
     try:
         write_atomic(registry_flat_path, json.dumps(flat_list, ensure_ascii=False, indent=2))

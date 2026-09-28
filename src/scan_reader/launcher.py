@@ -16,7 +16,7 @@ import sys
 import time
 import subprocess
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
@@ -139,11 +139,14 @@ def run_benchmark_suite(facade: LegalDocPlatformFacade):
             return
 
     import json
-    all_scores = []
+    extraction_scores: List[float] = []
+    schema_scores: List[float] = []
     benchmark_report: Dict[str, Any] = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "total_documents_tested": 0,
+        "total_documents_without_extraction": 0,
         "overall_accuracy_percent": 0.0,
+        "ground_truth_schema_integrity_percent": 0.0,
         "plugins": {}
     }
 
@@ -157,7 +160,8 @@ def run_benchmark_suite(facade: LegalDocPlatformFacade):
             gt_items = json.load(f)
 
         print(f"\n📋 Тестирование плагина: [{plugin.title}] (Эталонов: {len(gt_items)})")
-        scores = []
+        scores: List[float] = []
+        plugin_schema_scores: List[float] = []
         doc_details = []
 
         for idx, item in enumerate(gt_items, 1):
@@ -186,35 +190,56 @@ def run_benchmark_suite(facade: LegalDocPlatformFacade):
                 acc = bench_res.get("accuracy", 0.0)
                 status_str = f"Точность: {acc}%"
                 tested_real = True
+                scores.append(acc)
             else:
-                # Если файл еще не обработан, проверяется схема эталона без подмены результата
+                # C-09: документ не обработан. Сравнение эталона с собой даёт 100%,
+                # но это НЕ измерение точности извлечения. Такие оценки идут в
+                # отдельный показатель целостности схемы эталона и НЕ участвуют
+                # в overall_accuracy_percent.
                 bench_res = facade.benchmark_against_ground_truth(item, item, plugin.id)
                 acc = bench_res.get("accuracy", 100.0)
                 status_str = f"Целостность схемы эталона: {acc}% (нет извлечения)"
                 tested_real = False
+                plugin_schema_scores.append(acc)
 
-            scores.append(acc)
             doc_details.append({
                 "file_name": f_name,
                 "accuracy": acc,
                 "is_extracted_comparison": tested_real,
+                "counted_in_overall_accuracy": tested_real,
                 "details": bench_res.get("details", {})
             })
             print(f"  [{idx}/{len(gt_items)}] {f_name[:35]:<35} -> {status_str}")
 
         avg_plugin = round(sum(scores) / len(scores), 2) if scores else 0.0
-        all_scores.extend(scores)
+        avg_plugin_schema = round(sum(plugin_schema_scores) / len(plugin_schema_scores), 2) if plugin_schema_scores else 0.0
+        extraction_scores.extend(scores)
+        schema_scores.extend(plugin_schema_scores)
         benchmark_report["plugins"][plugin.id] = {
             "title": plugin.title,
             "documents_count": len(gt_items),
+            "documents_extracted": len(scores),
+            "documents_without_extraction": len(plugin_schema_scores),
             "average_accuracy_percent": avg_plugin,
+            "ground_truth_schema_integrity_percent": avg_plugin_schema,
             "documents": doc_details
         }
-        print(f"  ⭐️ Средняя точность по категории '{plugin.short_title}': {avg_plugin}%")
+        if scores:
+            print(f"  ⭐️ Средняя точность по категории '{plugin.short_title}': {avg_plugin}% ({len(scores)} док-тов)")
+        else:
+            print(f"  ⚠️ По категории '{plugin.short_title}' нет обработанных документов — точность не измерялась.")
+        if plugin_schema_scores:
+            print(f"  🧩 Целостность схемы эталона '{plugin.short_title}': {avg_plugin_schema}% ({len(plugin_schema_scores)} док-тов)")
 
-    total_avg = round(sum(all_scores) / len(all_scores), 2) if all_scores else 0.0
-    benchmark_report["total_documents_tested"] = len(all_scores)
+    # C-09: общий показатель точности формируется ТОЛЬКО по реально извлечённым
+    # документам. До исправления сюда попадали и 100% за сравнение эталона с собой,
+    # из-за чего запуск бенчмарка до обработки документов отчитывался как 100.00%.
+    total_avg = round(sum(extraction_scores) / len(extraction_scores), 2) if extraction_scores else 0.0
+    schema_avg = round(sum(schema_scores) / len(schema_scores), 2) if schema_scores else 0.0
+    benchmark_report["total_documents_tested"] = len(extraction_scores)
+    benchmark_report["total_documents_without_extraction"] = len(schema_scores)
     benchmark_report["overall_accuracy_percent"] = total_avg
+    benchmark_report["ground_truth_schema_integrity_percent"] = schema_avg
 
     # Сохранение отчета в JSON
     bench_out = os.path.join(facade.results_dir, "benchmark_metrics_summary.json")
@@ -222,7 +247,12 @@ def run_benchmark_suite(facade: LegalDocPlatformFacade):
         json.dump(benchmark_report, f, ensure_ascii=False, indent=2)
 
     print("\n" + "=" * 70)
-    print(f"  🏆 ИТОГОВАЯ ТОЧНОСТЬ БЕНЧМАРКА: {total_avg}%")
+    if extraction_scores:
+        print(f"  🏆 ИТОГОВАЯ ТОЧНОСТЬ ИЗВЛЕЧЕНИЯ: {total_avg}%  ({len(extraction_scores)} док-тов)")
+    else:
+        print("  🏆 ИТОГОВАЯ ТОЧНОСТЬ ИЗВЛЕЧЕНИЯ: н/д  (0 док-тов — извлечение не выполнялось)")
+    if schema_scores:
+        print(f"  🧩 ЦЕЛОСТНОСТЬ СХЕМЫ ЭТАЛОНА: {schema_avg}%  ({len(schema_scores)} док-тов без извлечения)")
     print(f"  💾 Отчет бенчмарка сохранен: {os.path.basename(facade.results_dir)}/benchmark_metrics_summary.json")
     print("=" * 70 + "\n")
 
