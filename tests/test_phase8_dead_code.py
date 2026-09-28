@@ -71,7 +71,7 @@ def test_prompt_user_on_unknown_removed_from_signature():
     False, но никогда не читался в теле метода.
     """
     params = list(inspect.signature(LegalDocPlatformFacade.process_single_document).parameters)
-    assert params == ["self", "file_path", "doc_type"]
+    assert params == ["self", "file_path", "doc_type", "update_registries"]
 
     cli_text = (SRC / "cli.py").read_text(encoding="utf-8")
     server_text = (SRC / "mcp" / "server.py").read_text(encoding="utf-8")

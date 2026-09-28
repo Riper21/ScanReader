@@ -154,7 +154,7 @@ semantics change — see "Breaking changes" below.
 
 ### Tests
 
-605 tests (was 155). Coverage 71.88 % with the floor raised from 55 % to 70 %.
+623 tests (was 155). Coverage 71.88 % with the floor raised from 55 % to 70 %.
 Both VLM call sites, all five JSON-RPC tools, both OCR backends, PDF rendering
 and the batch stages are now covered. `tests/test_ground_truth_integrity.py`
 validates every INN, SNILS and BIK in `data/ground_truth`, because an invalid

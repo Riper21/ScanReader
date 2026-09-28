@@ -301,7 +301,11 @@ def convert_salary_to_target_1c(doc_or_wrapper: Dict[str, Any], default_db_code:
         "Uin": str(uin)
     }
 
-    return target_dict
+    # Признаки верификации обязаны попадать в запись для 1С: бухгалтер должен
+    # видеть, что документ проверялся и требовал ли он ручного подтверждения.
+    from .verification_export import apply_verification_to_flat
+
+    return apply_verification_to_flat(target_dict, doc_or_wrapper)
 
 
 def export_1c_target_json(documents: List[Dict[str, Any]], filepath: str, default_db_code: int = 10):
@@ -321,18 +325,15 @@ def export_single_1c_target_json(doc: Dict[str, Any], filepath: str, default_db_
 
 
 def normalize_doc_data(doc_item: Dict[str, Any]) -> Dict[str, Any]:
-    """Приводит результат обработки документа к чистому словарю данных."""
-    if "data" in doc_item and isinstance(doc_item["data"], dict):
-        base = dict(doc_item["data"])
-        for meta_k in ("file_name", "file_path", "doc_type", "status", "processed_at"):
-            if meta_k in doc_item and meta_k not in base:
-                base[meta_k] = doc_item[meta_k]
-        if "quality_score_percent" in doc_item:
-            base["quality_score_percent"] = doc_item["quality_score_percent"]
-        if "quality_status" in doc_item:
-            base["quality_status"] = doc_item["quality_status"]
-        return base
-    return dict(doc_item)
+    """
+    Приводит результат обработки к чистому словарю данных.
+
+    Перенос результата верификации (статус, отчёт, ошибки, оговорки измерения,
+    флаг ручной проверки) выполняет core.verification_export.normalize_doc_data.
+    """
+    from .verification_export import normalize_doc_data as _normalize
+
+    return _normalize(doc_item)
 
 
 def convert_to_flat_1c(doc_item: Dict[str, Any], default_db_code: int = 10) -> Dict[str, Any]:
@@ -345,11 +346,8 @@ def convert_to_flat_1c(doc_item: Dict[str, Any], default_db_code: int = 10) -> D
 
     if is_salary:
         flat = convert_salary_to_target_1c(doc_item, default_db_code=default_db_code)
-        if "zero_trust_status" in doc_item or "zero_trust" in doc_item:
-            flat["ZeroTrustStatus"] = str(doc_item.get("zero_trust_status") or doc_item.get("zero_trust", {}).get("status", "unknown"))
-            flat["ZeroTrustValid"] = bool(doc_item.get("zero_trust", {}).get("is_valid", True))
         if "quality_score_percent" in doc_item:
-            flat["QualityScore"] = float(doc_item.get("quality_score_percent", 100.0))
+            flat["QualityScore"] = float(doc_item["quality_score_percent"])
         return flat
 
     data_val: Any = doc_item.get("data")
@@ -410,12 +408,17 @@ def convert_to_flat_1c(doc_item: Dict[str, Any], default_db_code: int = 10) -> D
         "DebtAmountRub": finances.get("debt_amount_rub") or finances.get("main_debt_rub") or finances.get("principal_debt_rub") or finances.get("total_rub_no_vat"),
         "CourtFeeRub": finances.get("court_fee_rub") or finances.get("fee_penalty_rub") or finances.get("penalty_rub"),
         "TotalAmountRub": total_rub,
-        "ZeroTrustStatus": str(doc_item.get("zero_trust_status") or doc_item.get("zero_trust", {}).get("status", "unknown")),
-        "ZeroTrustValid": bool(doc_item.get("zero_trust", {}).get("is_valid", True)),
         "QualityScore": float(doc_item.get("quality_score_percent", 100.0)),
         "ProcessedAt": str(doc_item.get("processed_at", "")),
     }
-    return flat_dict
+
+    # Раньше здесь подставлялись ZeroTrustStatus="unknown" и ZeroTrustValid=True
+    # для документа, который верификацию не проходил, то есть 1С получала
+    # ложное подтверждение. Теперь значения берутся из отчёта, а при его
+    # отсутствии остаются пустыми, а флаг ручной проверки становится истинным.
+    from .verification_export import apply_verification_to_flat
+
+    return apply_verification_to_flat(flat_dict, doc_item)
 
 
 

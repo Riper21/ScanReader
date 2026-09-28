@@ -915,7 +915,8 @@ class LegalDocPlatformFacade:
     def process_single_document(
         self,
         file_path: str,
-        doc_type: Optional[str] = None
+        doc_type: Optional[str] = None,
+        update_registries: bool = True
     ) -> Dict[str, Any]:
         """
         # Фаза 8.4: параметр prompt_user_on_unknown удалён. Он был объявлен,
@@ -928,6 +929,12 @@ class LegalDocPlatformFacade:
         2. Specialized Extraction Branch (Извлечение с финансовым сканером)
         3. Guardrails-валидация и расчет Quality Score (%)
         4. Сохранение атомарного JSON в Результаты/ и обновление реестров
+
+        :param update_registries: False отключает перезапись сводных реестров.
+            Пакетная обработка выключает её и записывает реестры один раз в конце,
+            потому что слияние на каждом документе читает и перезаписывает весь
+            реестр целиком: на 1 000 документах это около 10 ГБ лишней записи
+            и квадратичное время. Одиночный запуск из CLI оставляет включённым.
         """
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Файл не найден: {file_path}")
@@ -1038,9 +1045,17 @@ class LegalDocPlatformFacade:
         # C-08: статус выводится из фактического результата экстракции, а не только
         # из типа документа. Раньше нераспознанный документ писался в реестры 1С/Excel
         # со статусом COMPLETED, потому что фильтр реестра смотрел на "data" в payload.
+        #
+        # Документ, который НЕ ПРОШёл верификацию, не может помечаться COMPLETED:
+        # код возврата 3 требовал ручной проверки, но пакетный путь и реестры на
+        # статус верификации не смотрели вовсе, и непроверенный документ уезжал
+        # в учёт как подтверждённый.
+        from .core.verification_export import requires_human_review
+
+        review_needed = requires_human_review({"zero_trust": zt_report.to_dict()})
         if extraction_failed:
             doc_status = "FAILED"
-        elif doc_type == UNKNOWN_CATEGORY:
+        elif doc_type == UNKNOWN_CATEGORY or review_needed:
             doc_status = "NEEDS_REVIEW"
         else:
             doc_status = "COMPLETED"
@@ -1061,6 +1076,7 @@ class LegalDocPlatformFacade:
             "metrics": doc_eval,
             "measurement_caveats": doc_eval.get("measurement_caveats", {}) if doc_eval else {},
             "recovered_by_regex": recovered_fields,
+            "requires_human_review": review_needed,
             "status": doc_status,
             "errors": [failure_reason] if extraction_failed else [],
             "processed_at": time.strftime("%Y-%m-%d %H:%M:%S")
@@ -1070,7 +1086,8 @@ class LegalDocPlatformFacade:
         out_path = save_single_document_json(result, self.results_dir)
         # Обновление консолидированных JSON реестров
         # C-07: одиночная обработка сливается с накопленным реестром, а не затирает его
-        export_consolidated_registries([result], self.results_dir, merge=True)
+        if update_registries:
+            export_consolidated_registries([result], self.results_dir, merge=True)
 
         logger.info(
             f"✅ Обработка завершена: {base_name} -> {out_path} "
@@ -1205,7 +1222,11 @@ class LegalDocPlatformFacade:
 
                 t_start = time.perf_counter()
                 try:
-                    res = self.process_single_document(f_path, doc_type=cat_k)
+                    # Реестры обновляются один раз после всего потока: слияние
+                    # на каждом документе переписывало бы весь реестр заново.
+                    res = self.process_single_document(
+                        f_path, doc_type=cat_k, update_registries=False
+                    )
                     cat_results.append(res)
                     results.append(res)
                     dur = round(time.perf_counter() - t_start, 2)

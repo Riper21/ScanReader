@@ -494,7 +494,7 @@ def test_batch_stage4_continues_after_document_failure(facade, tmp_path, monkeyp
 
     calls = []
 
-    def _process(path, doc_type=None):
+    def _process(path, doc_type=None, update_registries=True):
         calls.append(os.path.basename(path))
         if os.path.basename(path) == "bad.jpg":
             raise RuntimeError("сбой обработки")

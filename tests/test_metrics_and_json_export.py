@@ -255,9 +255,16 @@ def test_salary_1c_target_conversion_and_export(tmp_path):
         "FSSP_Head", "Oktmo", "OrganizationName", "PaymentAccount",
         "PayType", "PurposeType", "Recipient", "RecipientInn",
         "RecipientKpp", "RecipientType", "ResolutionDate", "RospAddressFakt",
-        "RospBailiffFio", "RospFullCode", "Uin"
+        "RospBailiffFio", "RospFullCode", "Uin",
+        # Признаки верификации обязаны присутствовать в записи для 1С:
+        # бухгалтер должен видеть, проверялся ли документ и что с ним делать.
+        "ZeroTrustStatus", "ZeroTrustValid", "RequiresHumanReview", "AdvisoryReview",
     ]
     assert list(res_1c.keys()) == expected_keys
+    # Запись без отчёта о верификации: статус пуст, а не «unknown» с valid=True
+    assert res_1c["ZeroTrustStatus"] == ""
+    assert res_1c["ZeroTrustValid"] is None
+    assert res_1c["RequiresHumanReview"] is False
     assert res_1c["Bik"] == "015004950"
     assert res_1c["DbCode"] == 10
     assert res_1c["ExecutiveDocumentDate"] == "2024-06-21"
