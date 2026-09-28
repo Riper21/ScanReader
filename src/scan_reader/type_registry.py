@@ -206,14 +206,21 @@ class PluginSpec:
             return json.load(f)
 
     def _load_schema(self) -> Type:
+        """
+        Загружает Pydantic-модель плагина из schema.py.
+
+        Фаза 7.9: модуль НЕ регистрируется в sys.modules. Раньше он оставался
+        там навсегда, и каждый get_registry(force_reload=True) добавлял новый
+        объект на каждый плагин, то есть память росла пропорционально числу
+        перезагрузок. Регистрация нужна была для разрешения внутренних ссылок
+        модуля, но это делает сам спецификатор загрузчика.
+        """
         schema_path = os.path.join(self.folder_path, "schema.py")
         module_name = f"doc_types_{self.id}_schema"
         spec = importlib.util.spec_from_file_location(module_name, schema_path)
         if spec is None or spec.loader is None:
             raise ValueError(f"Не удалось загрузить схему плагина '{self.folder_name}' из {schema_path}")
         module = importlib.util.module_from_spec(spec)
-        # Регистрируем до exec, чтобы работали относительные dataclass-ссылки внутри модуля
-        sys.modules[module_name] = module
         try:
             spec.loader.exec_module(module)
         except Exception:

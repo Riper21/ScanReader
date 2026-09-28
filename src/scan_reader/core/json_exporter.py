@@ -440,14 +440,24 @@ def save_single_document_json(doc_result: Dict[str, Any], output_dir: str) -> st
     stem = base_stem
     candidate_full = os.path.join(output_dir, f"{stem}_Full.json")
     if os.path.exists(candidate_full):
+        existing_file_path: Optional[str] = None
+        readable = True
         try:
             with open(candidate_full, "r", encoding="utf-8") as existing_f:
                 existing_doc = json.load(existing_f)
-                existing_file_path = existing_doc.get("file_path", "") if isinstance(existing_doc, dict) else ""
-        except Exception:
-            existing_file_path = ""
+                existing_file_path = existing_doc.get("file_path") if isinstance(existing_doc, dict) else None
+        except Exception as e:
+            # Фаза 7.15: нечитаемый существующий файл РАНЬШЕ приводил к тихой
+            # перезаписи: existing_file_path становился "", условие коллизии не
+            # срабатывало, и чужой документ затирался. Теперь коллизия
+            # считается неразрешённой, и новый файл получает суффикс.
+            readable = False
+            logger.warning(
+                f"Существующий '{os.path.basename(candidate_full)}' не читается ({e}); "
+                "считаем имя занятым, чтобы не перезаписать неизвестное содержимое."
+            )
 
-        if file_path and existing_file_path and file_path != existing_file_path:
+        if not readable or (file_path and existing_file_path and file_path != existing_file_path):
             counter = 2
             while True:
                 candidate_stem = f"{base_stem}__{counter}"
@@ -458,7 +468,8 @@ def save_single_document_json(doc_result: Dict[str, Any], output_dir: str) -> st
                 counter += 1
             logger.warning(
                 f"⚠️ [C-12 Collision Guard] Обнаружена коллизия имени '{base_stem}' "
-                f"между '{existing_file_path}' и '{file_path}'. Файл сохранен как '{stem}'."
+                f"между '{existing_file_path or '<нечитаемый файл>'}' и '{file_path}'. "
+                f"Файл сохранен как '{stem}'."
             )
 
     full_path = os.path.join(output_dir, f"{stem}_Full.json")

@@ -5,11 +5,14 @@
 постановлений ФССП и заявлений (с учетом копеек, прописи в скобках и различных разделителей).
 """
 
-import logging
 import re
 from typing import Any, Optional, Dict
 
-_parser_logger = logging.getLogger("core.finance_parser")
+from .utils import get_logger
+
+# Фаза 7.5: сырой logging.getLogger не имеет фильтра маскирования, поэтому
+# секреты из разбираемых документов попадали в лог незамаскированными.
+_parser_logger = get_logger("core.finance_parser")
 
 
 def parse_russian_currency(val: Any) -> Optional[float]:

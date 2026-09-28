@@ -1,11 +1,9 @@
 """
 I/O utilities for resilient, atomic file handling, stream configuration, and secret masking.
-Adapted from architectural patterns in TestCraft and Mermaid-Guard.
 """
 
 from __future__ import annotations
 
-import logging
 import os
 import re
 import sys
@@ -13,7 +11,12 @@ import tempfile
 from pathlib import Path
 from typing import Optional, Union
 
-_io_logger = logging.getLogger("core.io_utils")
+from .utils import get_logger
+
+# Фаза 7.5: сырой logging.getLogger не имеет фильтра маскирования секретов.
+# Импорт utils здесь безопасен: utils импортирует io_utils только внутри
+# SecretMaskingFilter.filter, то есть лениво, и цикла на уровне модулей нет.
+_io_logger = get_logger("core.io_utils")
 
 MAX_INPUT_BYTES: int = 50 * 1024 * 1024  # 50 MB safeguard
 

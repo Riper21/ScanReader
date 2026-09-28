@@ -260,14 +260,26 @@ class LegalDocPlatformFacade:
                 _, text = load_document(file_path)
                 return text
             elif ext == ".pdf":
+                doc = None
                 try:
                     import fitz
+
                     doc = fitz.open(file_path)
                     text = "\n".join(page.get_text() for page in doc)
-                    doc.close()
                     return text if text.strip() else None
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Не удалось извлечь текстовый слой PDF '{file_path}': {e}")
                     return None
+                finally:
+                    # Фаза 7.2: close() обязан быть в finally. Раньше он стоял
+                    # внутри try, и любая ошибка на get_text() оставляла файл
+                    # открытым до момента сборки мусора — в пакетной обработке
+                    # это исчерпывало дескрипторы.
+                    if doc is not None:
+                        try:
+                            doc.close()
+                        except Exception:
+                            pass
         except Exception:
             return None
         return None
@@ -496,8 +508,14 @@ class LegalDocPlatformFacade:
         max_pages: Optional[int] = None
     ) -> Dict[str, Any]:
         """
-        Извлекает структурированные данные через специализированный поток плагина (Specialized Branch)
-        с гарантированным финансовым пост-процессингом и Regex-восстановлением пропущенных сумм.
+        Мультимодальная экстракция полей документа (Specialized Branch)
+        с последующей финансовой Regex-нормализацией и кэшированием.
+
+        Фаза 7.1: число страниц ограничено по умолчанию. Раньше max_pages
+        доходил до prepare_document_inputs как None, то есть ВЕСЬ документ
+        уходил в один мультимодальный запрос: для 200-страничного PDF это
+        десятки мегабайт base64, что заведомо не помещается в контекст модели
+        и приводит к отказу на стороне провайдера.
         """
         if not doc_type or doc_type == UNKNOWN_CATEGORY:
             doc_type, _, _ = self.classify_document(file_path)
@@ -525,18 +543,44 @@ class LegalDocPlatformFacade:
         else:
             system_prompt = plugin.prompt_text
 
+        # Фаза 7.1: лимит страниц по умолчанию, а не «весь документ в один запрос».
+        if max_pages is None:
+            try:
+                max_pages = int(os.getenv("SCANREADER_MAX_PAGES", "20") or 20)
+            except ValueError:
+                max_pages = 20
         mode, inputs = self.processor.prepare_document_inputs(file_path, max_pages=max_pages)
 
-        # Вычисление ключа кэша с защитой от коллизий и отслеживанием изменений файла
+        # Фаза 7.3: пустой текстовый слой нельзя отдавать VLM.
+        # Раньше содержимое документа для модели было пустой строкой, и она
+        # заполняла юридическую схему выдуманными значениями, которые затем
+        # проходили проверки. Отказ явный и попадает в отчёт как FAILED.
+        if mode == "text" and not str(inputs).strip():
+            logger.error(
+                f"Текстовый слой '{base_name}' пуст: отправлять документ в модель незачем. "
+                "Вероятен отсканированный документ, сохранённый как .docx/.txt."
+            )
+            return _extraction_failed(base_name, "Пустой текстовый слой документа")
+
+        # Фаза 7.7: ключ кэша строится по размеру и времени изменения файла плюс
+        # объёму подготовленного входа. Раньше вычислялся sha256 от repr() всего
+        # base64-списка, то есть на каждый документ создавалась вторая полная
+        # копия payload и хешировалась ради ключа.
         file_stat = ""
         try:
             st = os.stat(file_path)
-            file_stat = f"::{st.st_size}::{st.st_mtime}"
+            file_stat = f"::{st.st_size}::{st.st_mtime_ns}"
         except Exception as e:
             logger.debug(f"Не удалось получить статистику файла '{file_path}' для ключа кэша: {e}")
+        payload_size = (
+            sum(len(x) for x in inputs) if isinstance(inputs, list) else len(str(inputs))
+        )
         import hashlib
-        inputs_digest = hashlib.sha256(repr(inputs).encode("utf-8", errors="replace")).hexdigest()
-        cache_key_content = f"{mode}::{base_name}{file_stat}::{inputs_digest}"
+
+        digest = hashlib.sha256(
+            f"{payload_size}:{max_pages}:{type(inputs).__name__}".encode("utf-8")
+        ).hexdigest()
+        cache_key_content = f"{mode}::{file_path}{file_stat}::{digest}"
         cache_key = self.cache.compute_key(system_prompt, cache_key_content, self.model_name)
 
         # Проверка кэша

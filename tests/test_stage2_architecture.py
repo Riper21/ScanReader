@@ -80,26 +80,32 @@ def test_c16_clean_imports_no_sys_path_insert():
     assert hasattr(scan_reader.type_registry, "get_registry")
 
 
-def test_h10_bounded_cache_fifo_eviction(tmp_path):
-    """H-10: LLMResponseCache uses max_entries with FIFO eviction and persists in cache dir."""
+def test_h10_bounded_cache_eviction(tmp_path):
+    """
+    H-10: LLMResponseCache уважает max_entries и хранит кэш вне пакета.
+
+    Фаза 7.6: вытеснение LRU вместо FIFO. При FIFO первая по порядку вставки
+    запись вытеснялась независимо от того, использовалась ли она, то есть
+    повторно применяемые ключи терялись первыми.
+    """
     cache_dir = tmp_path / "cache_test"
     cache = LLMResponseCache(cache_dir=str(cache_dir), enabled=True, max_entries=3)
 
-    # Cache should be outside the source package
+    # Кэш размещается вне дерева исходников пакета
     assert "src/scan_reader" not in str(Path(cache.cache_dir).resolve()).replace("\\", "/")
 
-    # Fill beyond max_entries (3)
     cache.set("key1", "val1")
     cache.set("key2", "val2")
     cache.set("key3", "val3")
     assert len(cache) == 3
     assert cache.get("key1") == "val1"
 
-    # Add 4th item -> key1 should be evicted (FIFO)
+    # key1 только что использован, поэтому вытесняется key2 (наименее свежий)
     cache.set("key4", "val4")
     assert len(cache) == 3
-    assert cache.get("key1") is None
-    assert cache.get("key2") == "val2"
+    assert cache.get("key1") == "val1"
+    assert cache.get("key2") is None
+    assert cache.get("key3") == "val3"
     assert cache.get("key4") == "val4"
 
 

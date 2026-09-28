@@ -111,14 +111,49 @@ def sanitize_filename(title: str, max_len: int = 60) -> str:
 
 
 class SecretMaskingFilter(logging.Filter):
-    """Фильтр логирования для автоматического маскирования конфиденциальных токенов и ПДн (H-02)."""
+    """
+    Фильтр логирования для автоматического маскирования конфиденциальных
+    токенов и ПДн (H-02).
+
+    Фаза 7.4: раньше маскировался только record.msg, то есть только
+    f-строки и готовые строки. Вызов logger.info("токен %s", secret) не
+    маскировался вовсе, потому что record.msg в нём равен шаблону, а секрет
+    лежит в record.args. Теперь маскируется ОТРЕНДЕРЕННОЕ сообщение, что
+    покрывает оба случая и не ломает форматирование.
+    """
+
     def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            from .io_utils import mask_secret
+        except Exception as e:  # pragma: no cover - защита от рекурсии при импорте
+            _module_logger.debug(f"Маскирование секретов недоступно: {e}")
+            return True
+
+        try:
+            # 1) args: секрет мог быть передан параметром форматирования.
+            #    Маскируются ТОЛЬКО строки: приведение чисел к str ломает
+            #    спецификаторы %d/%f, и запись теряется целиком с ошибкой
+            #    форматирования вместо маскирования.
+            if record.args:
+                if isinstance(record.args, dict):
+                    record.args = {
+                        k: (mask_secret(v) if isinstance(v, str) else v)
+                        for k, v in record.args.items()
+                    }
+                elif isinstance(record.args, tuple):
+                    record.args = tuple(
+                        mask_secret(a) if isinstance(a, str) else a for a in record.args
+                    )
+        except Exception as e:  # pragma: no cover
+            _module_logger.debug(f"Маскирование аргументов лога не удалось: {e}")
+
+        # 2) msg: f-строки и готовые тексты
         if isinstance(record.msg, str):
             try:
-                from .io_utils import mask_secret
                 record.msg = mask_secret(record.msg)
-            except Exception as e:
-                _module_logger.debug(f"Маскирование секретов недоступно: {e}")
+            except Exception as e:  # pragma: no cover
+                _module_logger.debug(f"Маскирование сообщения лога не удалось: {e}")
+
         return True
 
 

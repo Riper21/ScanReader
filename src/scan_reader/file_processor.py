@@ -104,7 +104,13 @@ class FileProcessor:
         return img
 
     def enhance_document_contrast(self, img: Any) -> Any:
-        """Адаптивное улучшение контраста (AutoContrast + Sharpness) для усиления бледных печатей и шрифтов."""
+        """
+        Адаптивное улучшение контраста (AutoContrast + Sharpness) для усиления бледных печатей и шрифтов.
+
+        Фаза 7.14: отказ больше не молчит. Раньше любая ошибка возвращала исходное
+        изображение, и по документу было невозможно понять, улучшался контраст
+        или нет, — качество распознавания ухудшалось без следа.
+        """
         if not PIL_AVAILABLE:
             return img
         try:
@@ -114,7 +120,8 @@ class FileProcessor:
             enhancer = ImageEnhance.Sharpness(img_c)
             img_enhanced = enhancer.enhance(1.25)
             return img_enhanced
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Улучшение контраста не выполнено, изображение без изменений: {e}")
             return img
 
     def resize_image_if_needed(self, img: Any, max_dim: Optional[int] = None) -> Any:
@@ -182,14 +189,28 @@ class FileProcessor:
             logger.debug(f"Не удалось прочитать DPI из '{file_path}': {e}")
         return None
 
-    def process_image_file(self, file_path: str) -> List[str]:
-        """Загружает файл изображения и возвращает список Data URI."""
+    def process_image_file(self, file_path: str, max_pages: Optional[int] = None) -> List[str]:
+        """
+        Преобразует файл-скан в набор base64 Data URI.
+
+        Фаза 7.1: кадры многостраничного TIFF перебираются до max_pages. Раньше
+        ограничение применялось ПОСЛЕ того, как все кадры уже были декодированы
+        и закодированы, то есть лимит не экономил ни памяти, ни времени.
+        """
         if not PIL_AVAILABLE:
-            raise RuntimeError("Библиотека Pillow не установлена. Запустите: py -3 -m pip install Pillow")
+            raise RuntimeError(
+                "Требуется Pillow для работы с изображениями. Установите: py -3 -m pip install Pillow"
+            )
         check_input_file_size(file_path)
-        data_uris = []
+        data_uris: List[str] = []
         with Image.open(file_path) as img:
             for frame in ImageSequence.Iterator(img):
+                if max_pages is not None and len(data_uris) >= max_pages:
+                    logger.info(
+                        f"Файл '{os.path.basename(file_path)}': остановлено на {max_pages} кадрах "
+                        "из-за лимита SCANREADER_MAX_PAGES"
+                    )
+                    break
                 frame_rgb = frame.copy()
                 data_uris.append(self.pil_to_base64_data_uri(frame_rgb))
         return data_uris
@@ -251,9 +272,18 @@ class FileProcessor:
         Подготавливает двухзональный инжест для Роутера:
         - Для изображений/PDF: возвращает ("vision_dual_zone", {"header_uri": ..., "full_uri": ...})
         - Для DOCX/TXT: возвращает ("text", текст_шапки)
+
+        Фаза 7.8: единая проверка наличия Pillow. Раньше три из четырёх веток
+        поднимали понятную ошибку, а эта обращалась к Image.open() при
+        Image = None, то есть давала "AttributeError: 'NoneType' object has no
+        attribute 'open'" вместо указания, что надо установить.
         """
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Файл не найден: {file_path}")
+        if not PIL_AVAILABLE:
+            raise RuntimeError(
+                "Требуется Pillow для работы с изображениями. Установите: py -3 -m pip install Pillow"
+            )
         check_input_file_size(file_path)
 
         ext = os.path.splitext(file_path)[1].lower()
@@ -291,6 +321,11 @@ class FileProcessor:
         """
         Универсальный метод для полной экстракции данных:
         Возвращает: (mode, content), где mode == "vision" (список base64) или "text" (строка).
+
+        Фаза 7.1: страниц не больше max_pages. Раньше ограничение применялось
+        лишь к PDF, а многостраничный TIFF разбирался ЦЕЛИКОМ, и в один запрос
+        к VLM уходили все кадры. Для 200-страничного PDF это запрос на десятки
+        мегабайт, который заведомо не помещается в контекст модели.
         """
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Файл не найден: {file_path}")
@@ -299,9 +334,7 @@ class FileProcessor:
         ext = os.path.splitext(file_path)[1].lower()
 
         if ext in SUPPORTED_IMAGE_EXTS:
-            uris = self.process_image_file(file_path)
-            if max_pages is not None:
-                uris = uris[:max_pages]
+            uris = self.process_image_file(file_path, max_pages=max_pages)
             return "vision", uris
         elif ext in SUPPORTED_PDF_EXTS:
             uris = self.process_pdf_file(file_path, max_pages=max_pages)

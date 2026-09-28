@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import datetime
 import re
-import logging
 from typing import Optional, Tuple
 
-logger = logging.getLogger("verifier.chronology")
+from ..core.utils import get_logger
+
+# Фаза 7.5: сырой logging.getLogger не имеет фильтра маскирования секретов
+logger = get_logger("verifier.chronology")
 
 _MONTHS_RU = {
     "января": 1, "январь": 1, "февраля": 2, "февраль": 2,

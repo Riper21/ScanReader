@@ -5,11 +5,13 @@ Checks monetary reconciliations and compliance with Federal Law No. 229-FZ / Lab
 
 from __future__ import annotations
 
-import logging
 import re
 from typing import Any, Optional, Tuple
 
-logger = logging.getLogger("verifier.math_verifier")
+from ..core.utils import get_logger
+
+# Фаза 7.5: сырой logging.getLogger не имеет фильтра маскирования секретов
+logger = get_logger("verifier.math_verifier")
 
 
 def _coerce_finite_number(val: Any) -> Optional[float]:

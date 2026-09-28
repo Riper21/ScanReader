@@ -63,8 +63,11 @@ def validate_snils(snils_val: str) -> Tuple[bool, str]:
     if len(digits) != 11:
         return False, f"SNILS must be 11 digits, got {len(digits)}"
 
-    # Special case: SNILS below 001-001-998 are not verified
-    if int(digits[:9]) <= 1001997:
+    # Историческая льгота ПФР: номера, выданные ДО 01.01.1998
+    # (номер не превышает 001-001-998), не имеют корректной контрольной суммы.
+    # Фаза 7.12: граница именно 1001998. При 1001997 номер 001-001-998
+    # ошибочно отвергался, то есть проверка была строже стандарта.
+    if int(digits[:9]) <= 1001998:
         return True, "SNILS in exempt historical range"
 
     nums = [int(d) for d in digits]
