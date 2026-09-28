@@ -77,6 +77,15 @@ def _fully_consistent_doc():
     }
 
 
+# Эталонный текст содержит ВСЕ денежные значения документа: с Фазы 3 гейт
+# проверяет и суммы, поэтому текст без них честно возвращает расхождение.
+RAW_CONSISTENT = (
+    "Судебный приказ. Должник Иванов Иван Иванович, ИНН 7707083893. "
+    "Основной долг 50000 руб., госпошлина 3500 руб., всего удержанию 53500 рублей, "
+    "в размере 50% дохода."
+)
+
+
 def test_c03_single_number_is_not_zero_trust_verified():
     """Одно число не должно давать статус полной верификации.
 
@@ -88,20 +97,32 @@ def test_c03_single_number_is_not_zero_trust_verified():
         raw_ocr_text=RAW_UNRELATED,
     )
     assert report.status != VerificationStatus.ZERO_TRUST_VERIFIED
-    assert report.status == VerificationStatus.VLM_UNVERIFIED
+    # Сумма 1000 отсутствует в эталонном тексте, поэтому гейт отклоняет документ.
+    # Раньше такая сумма вообще не проверялась.
+    assert report.status == VerificationStatus.DISCREPANCY_DETECTED
+    assert any(i.code == "HALLUCINATION_RISK" and i.field_name == "finances.total_rub"
+               for i in report.issues)
+    assert report.details.get("math_verified_ok") is None
+
+
+def test_c03_single_number_present_in_text_is_verified_math_wise():
+    """Число, реально присутствующее в тексте, проходит гейт, но не даёт verified."""
+    report = ZeroTrustAuditor.audit_document(
+        data={"finances": {"total_rub": 1000.0}},
+        doc_type="salary_deductions",
+        raw_ocr_text="Судебный приказ о взыскании 1000 рублей в пользу взыскателя.",
+    )
+    assert not [i for i in report.issues if i.code == "HALLUCINATION_RISK"]
+    assert report.status != VerificationStatus.ZERO_TRUST_VERIFIED
     assert report.details.get("math_verified_ok") is None
 
 
 def test_c03_full_reconciliation_yields_zero_trust_verified():
     """Полная сверка + успешные контрольные суммы + выполненный гейт."""
-    raw = (
-        "Судебный приказ. Должник Иванов Иван Иванович, ИНН 7707083893, "
-        "взыскано 53500 рублей."
-    )
     report = ZeroTrustAuditor.audit_document(
         data=_fully_consistent_doc(),
         doc_type="salary_deductions",
-        raw_ocr_text=raw,
+        raw_ocr_text=RAW_CONSISTENT,
         gate_source="text_layer",
     )
     assert report.status == VerificationStatus.ZERO_TRUST_VERIFIED
@@ -130,7 +151,6 @@ def test_c02_standalone_verify_without_document_is_normal():
     )
     assert report.status == VerificationStatus.ZERO_TRUST_VERIFIED
     assert not [i for i in report.issues if i.code == "GATE_NOT_EXECUTED"]
-
 
 def test_c03_executive_documents_no_longer_reports_bogus_verification():
     """Исполнительные листы: 4 слагаемых не сверяются (C-04), но verified быть не может."""

@@ -24,7 +24,35 @@ RAW = "Исполнительный лист. Взыскать 224616 рубле
 
 
 def _audit(finances, doc_type, raw=RAW):
+    """Аудит с эталонным текстом, содержащим все проверяемые суммы.
+
+    С Фазы 3 (шаг 3.5) кросс-модальный гейт проверяет и денежные суммы, поэтому
+    фикстуры обязаны быть согласованы с эталонным текстом: сумма, которой нет в
+    документе, теперь честно отклоняется как неподтверждённая.
+    """
     return A.audit_document({"finances": finances}, doc_type=doc_type, raw_ocr_text=raw)
+
+
+def _raw_for(finances, base=RAW):
+    """Строит эталонный текст, содержащий все числовые значения блока finances."""
+    parts = [base]
+    for value in finances.values():
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            num = float(value)
+            if num == int(num):
+                parts.append(f"{int(num)} руб.")
+            else:
+                whole, frac = f"{abs(num):.2f}".split(".")
+                whole = whole.rjust(len(whole) + (3 - len(whole) % 3) % 3, "0")
+                parts.append(" ".join(whole[i:i + 3] for i in range(0, len(whole), 3)) + "," + frac + " руб.")
+    return " ".join(parts)
+
+
+def _audit_ok(finances, doc_type):
+    """Аудит с эталоном, согласованным с суммами (ожидается отсутствие расхождений)."""
+    return A.audit_document(
+        {"finances": finances}, doc_type=doc_type, raw_ocr_text=_raw_for(finances)
+    )
 
 
 def _codes(report):
@@ -66,9 +94,9 @@ REAL_WRIT = {
 
 
 def test_c04_writ_correct_sum_verifies():
-    report = _audit(REAL_WRIT, "executive_documents")
+    report = _audit_ok(REAL_WRIT, "executive_documents")
     assert report.details["math_verified_ok"] is True
-    assert not _codes(report)
+    assert "WRIT_MATH_DISCREPANCY" not in _codes(report)
 
 
 def test_c04_writ_wrong_total_is_detected():
@@ -81,18 +109,19 @@ def test_c04_writ_wrong_total_is_detected():
 
 def test_c04_writ_omitted_component_counts_as_zero():
     """Незаполненное «прочее» — норма, а не ошибка."""
-    report = _audit(
+    report = _audit_ok(
         {"main_debt_rub": 100000.0, "court_fee_rub": 20000.0, "total_rub": 120000.0},
         "executive_documents",
     )
     assert report.details["math_verified_ok"] is True
+    assert "WRIT_MATH_DISCREPANCY" not in _codes(report)
 
 
 def test_c04_writ_requires_two_components():
     """Одно слагаемое — сверка не выполняется, и это видно."""
-    report = _audit({"main_debt_rub": 100.0, "total_rub": 100.0}, "executive_documents")
+    report = _audit_ok({"main_debt_rub": 100.0, "total_rub": 100.0}, "executive_documents")
     assert report.details.get("math_verified_ok") is None
-    assert not _codes(report)
+    assert "WRIT_MATH_DISCREPANCY" not in _codes(report)
 
 
 def test_c04_writ_unparsable_component_is_error():
@@ -162,12 +191,12 @@ def test_c04_claim_still_reconciled():
 
 def test_c04_rule_does_not_leak_across_document_types():
     """Поле чужого типа не должно подтягиваться в сверку."""
-    report = _audit(
+    report = _audit_ok(
         {"total_rub_no_vat": 100.0, "total_vat_rub": 20.0, "main_debt_rub": 5.0, "total_rub": 120.0},
         "invoices_upd",
     )
     assert report.details["math_verified_ok"] is True
-    assert not _codes(report)
+    assert "WRIT_MATH_DISCREPANCY" not in _codes(report)
 
 
 # =========================================================================
