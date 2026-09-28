@@ -6,6 +6,173 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-09-28
+
+Verification honesty and plugin isolation. **Breaking:** verification
+semantics change — see "Breaking changes" below.
+
+### Breaking changes
+
+- A document with a fabricated, uncorroborated requisite (INN, case number,
+  party name, amount) is now reported as `discrepancy_detected` with
+  `is_valid=False`. It was previously reported as `zero_trust_verified` with
+  `is_valid=True`, which contradicted the audit report in the same payload.
+- `zero_trust_verified` now requires that checks actually ran: at least one
+  control digit passed, a monetary reconciliation compared two or more numbers,
+  and the cross-modal gate executed. A payload holding a single number no longer
+  reaches it.
+- Two statuses were added: `partially_verified` (some checks applied) and
+  `gate_not_executed` (the document was supplied but no reference text was
+  available, so cross-modal verification did not run). CLI exit code `3` is now
+  also returned for `gate_not_executed`, because automated import of unconfirmed
+  requisites is not permissible.
+- The financial regex recovery now marks the fields it recovered
+  (`_recovered_by_regex`, reported as `details.recovered_by_regex`), which makes
+  `heuristic_fallback` reachable and CLI exit code `4` meaningful. Amounts
+  produced this way are **not** to be treated as read off the page.
+- Consoles must not assume `QualityScore` is an accuracy figure. Reports now
+  carry `measurement_caveats` describing the measurement mode, how many
+  documents were compared against ground truth, and when the figure rests on
+  very few fields.
+- Accuracy against ground truth is weighted over fields **present in the
+  reference**; fields absent on both sides are excluded from the denominator,
+  and a field invented by the model is penalised and fails validation.
+- `benchmark.json` field `type` must come from the known vocabulary
+  (`exact`, `numeric`/`number`, `text`/`string`, `inn`, `date`). Plugin loading
+  fails on an unknown type. Previously `"number"` passed validation and money
+  fields were compared as strings, so a tenfold error scored 98.32 % and was
+  labelled "excellent".
+
+### Fixed
+
+- Money was never reconciled for writs, FSSP orders or acceptance certificates.
+  Real figures `157611.62 + 7004.39 + 60000.00` and a fabricated `999999`
+  produced identical results. Reconciliation is now declared per plugin.
+- Legitimate zeroes were dropped from reconciliation: `d.get(a) or d.get(b)`
+  discards `0.0`, so a waived debt, a zero fee and a zero total silently
+  skipped the check.
+- `parse_russian_currency` turned a negative amount into `None`, so a VLM
+  returning `-150000` produced a field indistinguishable from an unfilled one.
+  The sign is now preserved and the schema rejects it with a clear message.
+- A failed extraction was reported as `status: COMPLETED` and reached the 1C and
+  Excel registries. The registry filter read
+  `status == "FAILED" and "data" not in item`, which made it a no-op for exactly
+  the records it was meant to catch.
+- Processing a single file truncated the accumulated registry, because
+  `process_single_document` passed a one-element list to a full-replacement
+  writer. Registries are now merged, keyed by path and document type.
+- A benchmark run before processing compared ground truth with itself and
+  reported 100.00 % accuracy. Extraction accuracy and ground-truth schema
+  integrity are now separate figures, and a filename mismatch is reported as
+  `autonomous_no_ground_truth_match` instead of `benchmark`.
+- `generate_run_summary` discarded the measurement metadata, so an operator
+  read "average 100 %" with no indication of what had been measured.
+- The statutory limit check did not read the wording actually used in court
+  orders: `parse_percentage_value` required a literal `%`, so "50 процентов" and
+  "1/4 части заработка" were never parsed. The percentage check was also a
+  keyword test that awarded 90 points to `80%` and `100%`.
+- Art. 138 ТК РФ (20 % of total monthly income) was claimed in AGENTS.md but not
+  implemented. `verify_tk138_ceiling` added.
+- The docstring stated that the 70 % cap covers "child support or compensation
+  of harm". Legally wrong: since Federal Law 314-FZ (2019) the 50 % cap does not
+  apply to health harm at all and no percentage ceiling exists for it.
+- The PFRS legacy SNILS exemption used `<= 1001997`, rejecting number
+  001-001-998, which the standard exempts.
+- The `inn` checksum existed twice; the copy in `core/metrics_evaluator.py`
+  returned `is_valid=True` and 85 points for an INN failing its control digit,
+  and the result fed the Quality Score.
+- Month detection matched the substring `ма` (a truncated "мая"), so "сумма",
+  "компания" and "норма" scored as valid dates. ISO dates were never accepted.
+- `SecretMaskingFilter` touched only `record.msg`, so
+  `logger.info("token %s", secret)` leaked the secret from `record.args`. Four
+  modules used a raw `logging.getLogger` with no filter at all.
+- Multi-page TIFF decoding ignored the page limit: all frames were decoded and
+  encoded, and the limit only truncated the list. A whole PDF went into one
+  multimodal request; the default is now 20 pages.
+- The PDF file handle was closed inside the `try` block, so any read error left
+  the file open until garbage collection.
+- An empty text layer was sent to the model as the entire document content, and
+  the model filled a legal schema with invented values. It is now an explicit
+  `FAILED` before the model client is obtained.
+- The cache rewrote the whole cache file with `fsync` while holding the lock on
+  every `set()` (quadratic per run) and evicted by insertion order, discarding
+  frequently reused entries first. Writes are batched outside the lock and
+  eviction is LRU.
+- The cache key hashed `repr()` of the entire base64 payload, materialising a
+  second full copy of every document.
+- Schema modules were registered in `sys.modules` and never removed, so every
+  `force_reload` leaked one module per plugin.
+- An unreadable existing result file made the collision guard treat the name as
+  free and silently overwrite unknown content.
+- The shipped `examples/samples/salary_deduction_sample.txt` paired BIK
+  `044525225` with an account whose ЦБ РФ key does not balance, which would
+  produce `INVALID_BANK_ACCOUNT`.
+- A shipped BIK/account pair in a plugin prompt was rejected by the project's
+  own validator.
+- `verify_chronology` used `enforcement_date`, a field that exists in no schema,
+  so the check was dead for every plugin.
+
+### Added
+
+- `verification.json` as an optional eighth plugin file, declaring parties and
+  their identifiers, the bank block, monetary reconciliation rules, the Art. 99
+  deduction limit, chronology rules and the fields the cross-modal gate must
+  corroborate. `auditor.py` and `hallucination_gate.py` are now interpreters and
+  contain no document field name at all, which a test enforces.
+- `core/fields.py` with `ValidatedPartyMixin` and `ValidatedBankMixin`. The nine
+  schemas had 43 normalisers and **zero** constraints: a 15-digit "INN",
+  `deduction_percentage="999%"` and a negative amount all passed. `ge=0` on
+  money fields, patterns on identifiers, control-digit validators, and
+  `__test__ = False` on all nine root models.
+- `core/ocr.py` and the `[ocr]` / `[ocr-full]` extras. The project had no OCR
+  engine at all, so the cross-modal gate never ran for images. The gate now
+  records its reference provenance (`gate_source`, `gate_independent`) and warns
+  when the reference came from the same model as the extraction.
+- `core/config.py`; `.env` is loaded in `__init__.py` before any submodule, so
+  the E402 suppression for `facade.py` was removed from `pyproject.toml`.
+- `ValidatedBankMixin` verifies the ЦБ РФ account key; a Bank of Russia account
+  yields a warning rather than a false error.
+
+### Changed
+
+- `ValidationError` from a plugin schema is no longer swallowed into a silent
+  `dict(parsed_data)` dump.
+- Twelve plugin schemas, 152 regression tests across seven files.
+
+### Removed
+
+- `heuristic_fallback` is no longer dead code, but six genuinely dead symbols
+  are gone: `build_document_schemas`, `build_system_prompts`,
+  `build_category_names`, `build_category_folders`, `PluginSpec.dashboard_meta`,
+  `read_file_safe`, plus the `extract_raw_text_for_audit` alias, the `ROOT_DIR`
+  alias and the unused `prompt_user_on_unknown` parameter.
+- UTF-8 stream configuration existed in three places, one of which
+  reconfigured an already-reconfigured stream and raised
+  `ValueError: cannot set 'encoding' after a stream has been accessed`.
+- `process_batch` was a single 232-line method; it is now seven stage methods
+  plus four helpers.
+
+### Tests
+
+605 tests (was 155). Coverage 71.88 % with the floor raised from 55 % to 70 %.
+Both VLM call sites, all five JSON-RPC tools, both OCR backends, PDF rendering
+and the batch stages are now covered. `tests/test_ground_truth_integrity.py`
+validates every INN, SNILS and BIK in `data/ground_truth`, because an invalid
+identifier there makes the measurement meaningless.
+
+### Known limitations
+
+- `data/ground_truth` holds 23 documents; six of the nine types have exactly
+  one. Figures for those types describe a single document.
+- No Russian legal document extraction benchmark exists in the open-source
+  ecosystem; accuracy claims here are internal measurements, not published
+  results.
+- The JSON-RPC stdio server is a private protocol, not the official MCP
+  standard, so MCP clients cannot connect without an adapter.
+- `core/ocr.py` backend-specific code paths are covered with a stubbed engine;
+  the engines themselves are not exercised in tests.
+
+
 ## [0.9.0] - 2026-09-28
 
 Первая формальная релизная версия. Включает полное устранение находок аудита от 26.09.2026,

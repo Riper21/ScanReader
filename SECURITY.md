@@ -8,8 +8,15 @@ Security updates are applied to the latest minor version:
 
 | Version | Supported |
 | :--- | :--- |
-| `0.8.x` | ✅ Yes |
-| `< 0.8` | ❌ No |
+| `0.9.x` | ✅ Yes |
+| `< 0.9` | ❌ No |
+
+> Verification semantics changed incompatibly in `0.9.1`: documents with a
+> fabricated, uncorroborated requisite are now reported as
+> `discrepancy_detected` instead of `zero_trust_verified`, and the
+> `partially_verified` and `gate_not_executed` statuses were introduced.
+> Consumers checking for `zero_trust_verified` alone must review the new
+> statuses before upgrading.
 
 ---
 

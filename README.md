@@ -16,17 +16,28 @@ It bridges the gap between raw document scans (court orders, writs of execution,
 
 ## Key Guarantees & Features
 
-- **Fast-Path Visual Routing:** Dual-Zone header inspection and Chain-of-Thought categorization (under 1 second).
-- **Zero-Trust Verification Engine:** Independent deterministic audit of all extracted data:
-  - Checksum validation for Russian legal identifiers: INN (10 & 12 digits), SNILS, OGRN/OGRNIP, BIK, and 20-digit bank accounts.
-  - Mathematical reconciliation of monetary components: $\text{Total} = \text{Principal Debt} + \text{Penalty Fee} + \text{Legal Costs}$.
-  - Enforcement of statutory salary deduction limits under Federal Law No. 229-FZ (maximum 50% standard, up to 70% for child support / harm).
-  - Temporal chronology checks: Court Act Date $\le$ Writ Date $\le$ Enforcement Date.
-- **Cross-Modal Anti-Hallucination Gate:** Corroborates VLM-extracted debtor names, case numbers, and amounts against the raw OCR/text layer.
-- **JSON-RPC Stdio Server:** Built-in private JSON-RPC 2.0 server providing 5 tools for trusted in-perimeter agent integrations.
-- **Atomic File Operations:** Prevents corrupted or partial writes using fsync and temporary replacement.
-- **Dual Canonical JSON Output (Full & Flat):** Generates `{stem}_Full.json` (hierarchical schema, Zero-Trust audit report, Guardrails) and `{stem}_Flat.json` (flat single-level schema tailored for 1C accounting import).
-- **100% Backward Compatibility:** Seamless drop-in CLI replacement for existing 1C imports and batch runners.
+- **Fast-Path Visual Routing:** a three-stage cascade — path/filename rules, then text markers, and only if both miss a Dual-Zone Chain-of-Thought VLM pass. The model is *not* consulted when a rule already matched, which keeps routine batches deterministic and cheap.
+- **Zero-Trust Verification Engine:** deterministic audit of the extracted data, driven per document type by a `verification.json` declaration:
+  - Checksum validation for Russian legal identifiers: INN (10 & 12 digits), SNILS, OGRN/OGRNIP, BIK, and 20-digit bank accounts (ЦБ РФ key 565-П).
+  - Monetary reconciliation of components. A reconciliation only counts as a check when it compared **two or more numbers**; a single amount is reported as unchecked, not as verified.
+  - Statutory salary deduction limits: 50 % standard, up to 70 % with a child-support basis (Art. 99 229-ФЗ), and 20 % of total monthly income (Art. 138 ТК РФ). Compensation for harm to health is *not* subject to the 50 % cap (Federal Law 314-ФЗ) and has no percentage ceiling — the auditor does not claim one.
+  - Chronology of procedural acts.
+- **Cross-Modal Anti-Hallucination Gate:** corroborates extracted names, identifiers and amounts against a reference channel, and records where that channel came from (`gate_source`, `gate_independent`). With `pip install "scan-reader[ocr]"` the reference is an **independent** OCR pass; without it, transcription comes from the same model that performed the extraction, which is explicitly marked as *not* independent.
+- **Honest verification statuses:** `zero_trust_verified` means every applicable check passed. It is not a 100 % correctness claim, and the documentation states the boundary explicitly (see [ARCHITECTURE.md](ARCHITECTURE.md#2-verification-status-taxonomy)).
+- **Private JSON-RPC Stdio Server:** 5 tools for trusted in-perimeter integrations, with file access confined to `SCANREADER_ALLOWED_DIRS`. Not the official MCP protocol.
+- **Atomic File Operations:** prevents corrupted or partial writes using fsync and temporary replacement; registries are merged, never truncated.
+- **Dual Canonical JSON Output (Full & Flat):** generates `{stem}_Full.json` (hierarchical schema, Zero-Trust audit report, Guardrails, measurement caveats) and `{stem}_Flat.json` (flat single-level schema for 1C accounting import).
+- **Backward-compatible CLI:** drop-in replacement for existing 1C imports and batch runners, with deterministic exit codes.
+
+### Exit codes
+
+| Code | Meaning |
+| :--- | :--- |
+| `0` | Processed; no blocking verification finding |
+| `1` | Processing error, or input file missing |
+| `2` | CLI usage error |
+| `3` | Discrepancy detected, or the cross-modal gate could not run — **human review required** |
+| `4` | Amounts were recovered by the heuristic regex scanner rather than read by the model |
 
 ---
 
@@ -54,6 +65,20 @@ ScanReader features a plug-and-play plugin architecture (`TypeRegistry`) providi
 ```bash
 pip install .
 ```
+
+### OCR (recommended for scans)
+
+Without an OCR engine the cross-modal gate for **scans** falls back to a transcription produced by the same model that performed the extraction. That is not an independent check — recognition errors cannot be told apart from extraction errors — and the report marks it as such.
+
+```bash
+# CPU, ~15 MB, same engine family as PaddleOCR
+pip install ".[ocr]"
+
+# PaddleOCR with GPU support and broader language coverage
+pip install ".[ocr-full]"
+```
+
+After installation `scan-reader doctor` reports the active backend.
 
 ### Development Tools
 ```bash
@@ -96,11 +121,11 @@ scan-reader mcp
 ```
 
 ### Exit Codes
-- `0`: Success (all documents processed and Zero-Trust verified).
+- `0`: Processed; no blocking verification finding.
 - `1`: Processing error or input file missing.
 - `2`: CLI usage / argument syntax error.
-- `3`: Discrepancy detected (requires human operator review).
-- `4`: Fallback extraction applied.
+- `3`: Discrepancy detected, or the cross-modal gate could not run — human review required.
+- `4`: Amounts recovered by the heuristic regex scanner instead of read by the model.
 
 ---
 
@@ -125,10 +150,20 @@ report = ZeroTrustAuditor.audit_document(
     raw_ocr_text=result.get("raw_text")
 )
 
-if report.status == VerificationStatus.ZERO_TRUST_VERIFIED:
-    print("✅ 100% Verified by Zero-Trust Engine")
-elif report.status == VerificationStatus.DISCREPANCY_DETECTED:
-    print("⚠️ Discrepancy detected:", [issue.message for issue in report.issues])
+    if report.status == VerificationStatus.ZERO_TRUST_VERIFIED:
+        # «100 % verified» would be a false claim: this means every applicable
+        # deterministic check passed, which is a statement about the checks,
+        # not about the document being correct.
+        print("All applicable Zero-Trust checks passed")
+        print("  checksums verified:", report.details.get("checksums_verified_ok"))
+        print("  reconciliation run  :", report.details.get("math_verified_ok"))
+        print("  gate source        :", report.details.get("gate_source"))
+    elif report.status == VerificationStatus.PARTIALLY_VERIFIED:
+        print("Only part of the checks could be applied - selective review needed")
+    elif report.status == VerificationStatus.GATE_NOT_EXECUTED:
+        print("Cross-modal gate did not run: requisites are unconfirmed")
+    elif report.status == VerificationStatus.DISCREPANCY_DETECTED:
+        print("Discrepancy detected:", [issue.message for issue in report.issues])
 ```
 
 ---
