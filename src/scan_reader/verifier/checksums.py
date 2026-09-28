@@ -116,7 +116,9 @@ def validate_ogrn(ogrn_val: str) -> Tuple[bool, str]:
 def validate_bik(bik_val: str) -> Tuple[bool, str]:
     """
     Validate Russian Bank Identifier Code (BIK).
-    Format: 9 digits. Russian domestic BIKs start with '04'.
+    Format: 9 digits. Russian domestic BIKs start with '04' (banks / RCC).
+    Treasury (УФК / Федеральное казначейство) settlement BIKs start with '01'
+    and appear in the vast majority of FSSP payment requisites.
     """
     digits = clean_digits(bik_val)
     if not digits:
@@ -125,8 +127,11 @@ def validate_bik(bik_val: str) -> Tuple[bool, str]:
     if len(digits) != 9:
         return False, f"BIK must be 9 digits, got {len(digits)}"
 
-    if not digits.startswith("04"):
-        return False, f"Russian domestic BIK must start with '04', got '{digits[:2]}'"
+    if not digits.startswith(("04", "01")):
+        return False, (
+            f"Russian domestic BIK must start with '04' (banks/RCC) or '01' (Treasury/UFK), "
+            f"got '{digits[:2]}'"
+        )
 
     return True, "Valid Russian BIK"
 

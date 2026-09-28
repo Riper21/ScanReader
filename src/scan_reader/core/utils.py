@@ -141,6 +141,24 @@ def get_logger(name: str) -> logging.Logger:
     return logger
 
 
+def normalize_ip_number(val: Any) -> str:
+    """
+    Восстанавливает канонический формат номера исполнительного производства:
+    NNNNN/NN/NNNN(N)-ИП. VLM на низких DPI иногда теряет разделители «/»
+    при корректных цифрах (например, «107011630001-ИП» -> «10701/16/30001-ИП»).
+    Затрагиваются только значения вида «11-13 цифр + -ИП» без слэшей —
+    прочие форматы (со слэшами, номера без суффикса -ИП) не меняются.
+    """
+    s = coerce_to_str(val).strip()
+    if "/" in s:
+        return s
+    cleaned = s.lstrip("№").lstrip()
+    m = re.fullmatch(r"(\d{5})(\d{2})(\d{4,6})-ИП", cleaned)
+    if m:
+        return f"{m.group(1)}/{m.group(2)}/{m.group(3)}-ИП"
+    return s
+
+
 def coerce_to_str(v: Any) -> str:
     """
     Универсальное приведение любых типов (dict, list, int, float) к аккуратной строке
@@ -173,6 +191,7 @@ __all__ = [
     "sanitize_filename",
     "get_logger",
     "coerce_to_str",
+    "normalize_ip_number",
 ]
 
 

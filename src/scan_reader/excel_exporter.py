@@ -120,7 +120,7 @@ class LegalExcelExporter:
         headers_sum = [
             "Тип документа",
             "Количество",
-            "Валидация Guardrails",
+            "Валидация (Guardrails + Zero-Trust)",
             "Zero-Trust Проверено",
             "Сумма по реестру (руб)",
             "Средний балл качества"
@@ -172,8 +172,10 @@ class LegalExcelExporter:
                         total_sum += float(val)
             total_all_sum += total_sum
 
+            # Средний балл качества — из quality_score_percent (S-4: ранее брался
+            # validation.score от Guardrails, что показывало 100% при реальном 95.4%)
             avg_score = (
-                round(sum(i.get("validation", {}).get("score", 100.0) for i in items) / count, 1)
+                round(sum(float(i.get("quality_score_percent", 100.0)) for i in items) / count, 1)
                 if count > 0 else 100.0
             )
 
@@ -222,7 +224,8 @@ class LegalExcelExporter:
                 fill_header = fill_header_salary
 
             cols = [{"path": "file_name", "label": "Имя файла", "kind": "text"}] + plugin.flat_columns + [
-                {"path": "validation.score", "label": "Валидация (%)", "kind": "number"},
+                {"path": "validation.score", "label": "Guardrails (%)", "kind": "number"},
+                {"path": "quality_score_percent", "label": "Качество (%)", "kind": "number"},
                 {"path": "zero_trust_status", "label": "Zero-Trust Статус", "kind": "zt_status"}
             ]
 
@@ -261,6 +264,8 @@ class LegalExcelExporter:
                         val = item.get("validation", {}).get(p_path.replace("validation.", ""), "")
                     elif p_path == "file_name":
                         val = item.get("file_name", "")
+                    elif p_path == "quality_score_percent":
+                        val = item.get("quality_score_percent", "")
                     elif p_path == "zero_trust_status":
                         val = zt_raw
                     else:

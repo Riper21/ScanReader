@@ -58,7 +58,8 @@ from .core.metrics_evaluator import (
     export_metrics_json,
     append_to_metrics_history,
     export_run_summary_markdown,
-    export_run_summary_excel
+    export_run_summary_excel,
+    validate_ip_number_format
 )
 from .core.json_exporter import (
     save_single_document_json,
@@ -571,7 +572,7 @@ class LegalDocPlatformFacade:
         passed_count = 0
         total_rules = len(rules)
         known_rules = {"not_empty", "valid_date_format", "positive_number_or_percentage",
-                       "positive_number", "valid_inn"}
+                       "positive_number", "valid_inn", "ip_number_format", "ip_number_format_optional"}
 
         for r in rules:
             if not isinstance(r, dict):
@@ -612,6 +613,20 @@ class LegalDocPlatformFacade:
                     is_valid = ok_inn
                 else:
                     is_valid = False
+            elif rule_type == "ip_number_format":
+                # Формат номера ИП: NNNNN/NN/NNNN(N)-ИП (слэши обязательны, номер обязателен)
+                if not val:
+                    is_valid = False
+                else:
+                    ok_fmt, fmt_score = validate_ip_number_format(str(val))
+                    is_valid = bool(ok_fmt and fmt_score >= 90.0)
+            elif rule_type == "ip_number_format_optional":
+                # То же, но пустое значение допустимо (номер ИП присваивается не всегда)
+                if not val:
+                    is_valid = True
+                else:
+                    ok_fmt, fmt_score = validate_ip_number_format(str(val))
+                    is_valid = bool(ok_fmt and fmt_score >= 90.0)
             elif rule_type and rule_type not in known_rules:
                 # H-09: неизвестный тип правила не может молча считаться пройденным
                 is_valid = False
@@ -717,6 +732,47 @@ class LegalDocPlatformFacade:
     # =========================================================================
     # 5. СКВОЗНАЯ ОБРАБОТКА (ОДИНОЧНАЯ И ПАКЕТНАЯ)
     # =========================================================================
+    @staticmethod
+    def _combine_quality_and_validation(
+        validation: Dict[str, Any],
+        quality_score: float,
+        quality_status: str,
+        zt_report: Any,
+    ) -> Tuple[Dict[str, Any], float, str]:
+        """
+        Связывает Guardrails, Quality Score и Zero-Trust в согласованный итог (S-2):
+        - ошибка Zero-Trust -> validation.passed = False, quality_status = needs_attention;
+        - низкое разрешение скана (OCR_LOW_CONFIDENCE) -> штраф 10 п.п. к Quality,
+          статус не может быть «excellent».
+        Раньше рядом жили zero_trust=discrepancy_detected и quality_status=excellent.
+        """
+        validation = dict(validation)
+        issues = list(validation.get("issues", []))
+        zt_errors = [i for i in zt_report.issues if i.severity == "error"]
+
+        if zt_errors:
+            error_codes = "; ".join(sorted({i.code for i in zt_errors}))
+            issues.append({
+                "field": "zero_trust",
+                "severity": "ERROR",
+                "message": f"Zero-Trust обнаружил ошибки: {error_codes}",
+            })
+            validation["passed"] = False
+            quality_status = "needs_attention"
+
+        if zt_report.details.get("scan_low_quality"):
+            quality_score = max(0.0, round(float(quality_score) - 10.0, 2))
+            issues.append({
+                "field": "scan",
+                "severity": "WARNING",
+                "message": "Низкое разрешение скана (<150 DPI): вероятны ошибки распознавания цифр и ФИО",
+            })
+            if quality_status == "excellent":
+                quality_status = "high"
+
+        validation["issues"] = issues
+        return validation, quality_score, quality_status
+
     def process_single_document(
         self,
         file_path: str,
@@ -783,6 +839,11 @@ class LegalDocPlatformFacade:
             raw_ocr_text=raw_text,
             extraction_method=method if method == "regex_fallback" else "vlm",
             scan_dpi=scan_dpi,
+        )
+
+        # 5. Связность статусов (S-2): Guardrails / Quality / Zero-Trust образуют единый итог
+        validation, quality_score, quality_status = self._combine_quality_and_validation(
+            validation, quality_score, quality_status, zt_report
         )
 
         result = {

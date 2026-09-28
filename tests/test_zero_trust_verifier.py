@@ -73,8 +73,13 @@ def test_bik_validation():
     ok, msg = validate_bik("044525225")
     assert ok is True
 
-    ok, msg = validate_bik("014525225")
-    assert ok is False  # Must start with 04
+    # S-5: казначейские БИКи УФК (01xxxxxxx) валидны — типичный получатель в документах ФССП
+    ok, msg = validate_bik("015004950")
+    assert ok is True
+
+    # Неверный префикс (не 04 и не 01)
+    ok, msg = validate_bik("124525225")
+    assert ok is False
 
 
 def test_bank_account_validation():

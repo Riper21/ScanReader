@@ -1,4 +1,4 @@
-# Byte-compiled / optimized / DLL files
+﻿# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
@@ -71,3 +71,6 @@ incoming/**
 !incoming/*/.gitkeep
 *.tmp
 *.bak
+
+# Локальные анализы (не публикуются)
+файлы для анализа/

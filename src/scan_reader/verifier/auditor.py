@@ -202,7 +202,25 @@ class ZeroTrustAuditor:
             count += 1
             ok_acc, msg_acc = validate_bank_account(str(account), str(bik))
             if not ok_acc:
-                issues.append(VerificationIssue("error", "INVALID_BANK_ACCOUNT", msg_acc, "payment_details.payment_account"))
+                # Счета, открытые в самом Банке России (ГРКЦ), не подчиняются
+                # стандартному ключеванию 565-П: ложный error недопустим.
+                recipient_str = str(
+                    pay_details.get("recipient") or data.get("recipient") or data.get("bank_requisites") or ""
+                ).lower()
+                is_bank_of_russia = ("банк россии" in recipient_str) or ("гркц" in recipient_str)
+                if is_bank_of_russia:
+                    issues.append(
+                        VerificationIssue(
+                            "warning",
+                            "BANK_ACCOUNT_UNVERIFIED",
+                            f"Счет получателя в Банке России (ГРКЦ): стандартная проверка ключа неприменима ({msg_acc})",
+                            "payment_details.payment_account",
+                        )
+                    )
+                else:
+                    issues.append(
+                        VerificationIssue("error", "INVALID_BANK_ACCOUNT", msg_acc, "payment_details.payment_account")
+                    )
 
         details["checksums_checked"] = count
 

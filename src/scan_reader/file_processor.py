@@ -68,18 +68,23 @@ class FileProcessor:
         max_dimension: int = 2048,
         image_quality: int = 88,
         pdf_dpi: int = 200,
-        enable_contrast_enhancement: bool = True
+        enable_contrast_enhancement: bool = True,
+        min_dimension: int = 1500
     ):
         """
         :param max_dimension: Максимальный размер стороны изображения в пикселях.
         :param image_quality: Качество сжатия JPEG (1-100).
         :param pdf_dpi: Разрешение рендеринга PDF страниц (DPI=200).
         :param enable_contrast_enhancement: Включение автоконтраста бледных сканов.
+        :param min_dimension: Апскейл сканов меньше этой стороны (S-1): VLM
+            на 96 DPI читает цифры реквизитов с ошибками — апскейл 2x (LANCZOS)
+            существенно повышает точность распознавания мелкого текста.
         """
         self.max_dimension = max_dimension
         self.image_quality = image_quality
         self.pdf_dpi = pdf_dpi
         self.enable_contrast_enhancement = enable_contrast_enhancement
+        self.min_dimension = min_dimension
 
     def normalize_and_orient_image(self, img: Any) -> Any:
         """Корректирует ориентацию изображения по EXIF-тегам, приводит к RGB и улучшает контраст."""
@@ -113,12 +118,22 @@ class FileProcessor:
             return img
 
     def resize_image_if_needed(self, img: Any, max_dim: Optional[int] = None) -> Any:
-        """Пропорционально уменьшает изображение, если оно превышает max_dim."""
+        """
+        Пропорциональное масштабирование под лимиты VLM:
+        - больше max_dim -> уменьшение;
+        - меньше min_dimension (S-1) -> апскейл до 2x LANCZOS (не выше max_dim):
+          мелкий текст реквизитов на сканах 96 DPI становится читаемым.
+        """
         img = self.normalize_and_orient_image(img)
         limit = max_dim or self.max_dimension
         w, h = img.size
-        if max(w, h) > limit:
-            scale = limit / float(max(w, h))
+        long_side = max(w, h)
+        scale = 1.0
+        if long_side > limit:
+            scale = limit / float(long_side)
+        elif long_side < self.min_dimension:
+            scale = min(2.0, limit / float(long_side))
+        if scale != 1.0:
             new_w, new_h = int(w * scale), int(h * scale)
             img = img.resize((new_w, new_h), _get_lanczos_resampling())
         return img

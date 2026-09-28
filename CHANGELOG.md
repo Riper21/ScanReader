@@ -6,6 +6,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — Scan quality remediation (S-1…S-8, кейс 745×1024 @ 96 DPI)
+
+Root cause analysis of a real 96 DPI scan with garbled requisites (lost `/` in IP numbers,
+misread digits, false INVALID_BANK_ACCOUNT on a Bank of Russia account, Excel showing 100%).
+
+### Fixed
+- **S-1:** Low-resolution scans (< 1500 px) are upscaled 2× (LANCZOS) before VLM inference —
+  requisites digits become readable instead of guessed.
+- **S-2:** Status coherence: a Zero-Trust error now forces `validation.passed = False`
+  and `quality_status = needs_attention` (no more `discrepancy_detected` + `excellent` side by side);
+  `OCR_LOW_CONFIDENCE` (< 150 DPI) applies a 10-point quality penalty and forbids "excellent".
+- **S-3:** IP-number format restoration: `NNNNN/NN/NNNNN-ИП` is deterministically rebuilt from
+  slash-less VLM output (digits preserved) in salary_deductions / enforcement_orders schemas.
+- **S-4:** Excel summary "Средний балл качества" now averages `quality_score_percent`
+  (was Guardrails score → misleading 100%); detail sheets get a "Качество (%)" column.
+- **S-5:** Treasury BIKs (`01xxxxxxx`, УФК) are valid — the most common FSSP payee no longer
+  triggers a false INVALID_BIK.
+- **S-6:** Bank of Russia (ГРКЦ) accounts that fail the standard 565-П key check produce a
+  `BANK_ACCOUNT_UNVERIFIED` warning instead of a false error (regular accounts still fail hard).
+- **S-7/S-8:** Guardrails DSL gains `ip_number_format` / `ip_number_format_optional` rules;
+  salary_deductions and enforcement_orders autonomous configs now check IP-number format
+  and the mandatory base-document number.
+
 ## [Unreleased] — Audit remediation (Итоги аудита 26.09.2026)
 
 ### Fixed — Blockers

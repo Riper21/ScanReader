@@ -17,6 +17,18 @@
       "rule": "positive_number_or_percentage",
       "severity": "HIGH",
       "message": "Должна быть указана сумма долга или процент удержания"
+    },
+    {
+      "field": "ip_number",
+      "rule": "ip_number_format",
+      "severity": "HIGH",
+      "message": "Номер ИП должен иметь формат NNNNN/NN/NNNNN-ИП (со слэшами)"
+    },
+    {
+      "field": "base_doc_number",
+      "rule": "not_empty",
+      "severity": "HIGH",
+      "message": "Номер исполнительного документа-основания обязателен"
     }
   ]
 }

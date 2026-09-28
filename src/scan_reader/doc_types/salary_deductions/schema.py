@@ -2,7 +2,7 @@
 from typing import Optional, Any
 from pydantic import BaseModel, Field, field_validator
 from scan_reader.core.finance_parser import parse_russian_currency
-from scan_reader.core.utils import coerce_to_str
+from scan_reader.core.utils import coerce_to_str, normalize_ip_number
 
 
 class AuthorityInfo(BaseModel):
@@ -99,5 +99,11 @@ class SalaryDeductionDoc(BaseModel):
     @classmethod
     def clean_strings(cls, v: Any) -> str:
         return coerce_to_str(v)
+
+    @field_validator('doc_number', 'ip_number', mode='before')
+    @classmethod
+    def restore_ip_format(cls, v: Any) -> str:
+        """Восстановление канонического формата NNNNN/NN/NNNNN-ИП из слитных цифр."""
+        return normalize_ip_number(v)
 
 
