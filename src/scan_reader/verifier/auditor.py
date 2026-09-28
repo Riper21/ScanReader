@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-from .checksums import validate_bik, validate_inn, validate_ogrn, validate_snils, validate_bank_account
+from .checksums import clean_digits, validate_bik, validate_inn, validate_ogrn, validate_snils, validate_bank_account
 from .chronology import verify_chronology, parse_flexible_date
 from .hallucination_gate import audit_cross_modal_consistency
 from .math_verifier import verify_amounts_reconciliation, verify_deduction_percentage, parse_percentage_value
@@ -222,6 +222,61 @@ class ZeroTrustAuditor:
                         VerificationIssue("error", "INVALID_BANK_ACCOUNT", msg_acc, "payment_details.payment_account")
                     )
 
+        # S-12: перекрестные форматные проверки реквизитов (мусор от VLM не проходит молча)
+        uin_digits = clean_digits(pay_details.get("uin") or "")
+        rosp_digits = clean_digits(pay_details.get("rosp_code") or data.get("rosp_code") or "")
+        if len(uin_digits) >= 20 and rosp_digits:
+            count += 1
+            if rosp_digits not in uin_digits:
+                issues.append(
+                    VerificationIssue(
+                        "warning",
+                        "UIN_ROSP_MISMATCH",
+                        f"УИН ({pay_details.get('uin')}) не содержит ведомственный код РОСП ({pay_details.get('rosp_code')})",
+                        "payment_details.uin",
+                    )
+                )
+
+        oktmo_digits = clean_digits(pay_details.get("oktmo") or "")
+        if oktmo_digits and len(oktmo_digits) not in (8, 11):
+            issues.append(
+                VerificationIssue(
+                    "warning",
+                    "INVALID_OKTMO",
+                    f"ОКТМО должен содержать 8 или 11 цифр, получено {len(oktmo_digits)}: '{pay_details.get('oktmo')}'",
+                    "payment_details.oktmo",
+                )
+            )
+
+        kpp_digits = clean_digits(pay_details.get("recipient_kpp") or "")
+        if kpp_digits and len(kpp_digits) != 9:
+            issues.append(
+                VerificationIssue(
+                    "warning",
+                    "INVALID_KPP",
+                    f"КПП должен содержать 9 цифр, получено {len(kpp_digits)}: '{pay_details.get('recipient_kpp')}'",
+                    "payment_details.recipient_kpp",
+                )
+            )
+
+        # Номер бланка ИЛ (ФС/ВС/АС + 8-9 цифр) и номер документа-основания
+        for ref_val, field_name in (
+            (data.get("blank_number"), "blank_number"),
+            (data.get("base_doc_number"), "base_doc_number"),
+        ):
+            ref_digits = clean_digits(ref_val or "")
+            # Короткие номера судебных приказов («2-967») пропускаем: проверяем только
+            # «длинные» номера, где ожидаем 8-9 цифр бланка ИЛ
+            if len(ref_digits) >= 7 and len(ref_digits) not in (8, 9):
+                issues.append(
+                    VerificationIssue(
+                        "warning",
+                        "INVALID_DOC_REF_NUMBER",
+                        f"Номер документа-основания '{ref_val}' имеет нетипичную длину цифр ({len(ref_digits)}, ожидается 8-9)",
+                        field_name,
+                    )
+                )
+
         details["checksums_checked"] = count
 
     @classmethod
@@ -313,8 +368,34 @@ class ZeroTrustAuditor:
 
     @classmethod
     def _audit_dates(cls, data: Dict[str, Any], issues: List[VerificationIssue], details: Dict[str, Any]) -> None:
-        # Court & FSSP Chronology
         court = _as_dict(data.get("court"))
+
+        # S-11: непарсируемые даты (мусор от VLM) не должны проходить молча
+        _date_fields = (
+            "doc_date", "act_date", "issue_date", "base_doc_date",
+            "effective_date_from", "effective_date_to", "valid_until",
+            "term_start", "term_end", "contract_date", "period_start", "period_end",
+        )
+        date_pairs = [(f, data.get(f)) for f in _date_fields]
+        date_pairs += [("court.act_date", court.get("act_date")), ("court.issue_date", court.get("issue_date"))]
+        unparseable = []
+        for f_name, raw in date_pairs:
+            if raw is None or not str(raw).strip():
+                continue
+            if parse_flexible_date(str(raw)) is None:
+                unparseable.append(f_name)
+                issues.append(
+                    VerificationIssue(
+                        "warning",
+                        "UNPARSEABLE_DATE",
+                        f"Поле '{f_name}' содержит дату в нераспознаваемом формате: '{raw}'",
+                        f_name,
+                    )
+                )
+        if unparseable:
+            details["unparseable_dates"] = unparseable
+
+        # Court & FSSP Chronology
         act_date = court.get("act_date") or data.get("doc_date")
         writ_date = court.get("issue_date")
         enf_date = data.get("enforcement_date")

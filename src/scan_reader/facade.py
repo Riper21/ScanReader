@@ -208,6 +208,66 @@ class LegalDocPlatformFacade:
             return None
         return None
 
+    def _transcribe_scan_for_audit(self, file_path: str) -> Optional[str]:
+        """
+        S-13: второй VLM-проход «точная транскрипция» для сканов без текстового слоя.
+        Результат используется как эталон в кросс-модальном гейте: сверка ФИО, УИН,
+        номеров ИП/ИЛ и других реквизитов экстракции против буквальной транскрипции
+        ловит ошибки распознавания, невидимые для детерминированных проверок.
+        Управление: SCANREADER_OCR_CROSSCHECK (по умолчанию включен).
+        """
+        if os.getenv("SCANREADER_OCR_CROSSCHECK", "true").lower() not in ("true", "1", "yes"):
+            return None
+
+        client = self._get_client()
+        if not client:
+            return None
+
+        try:
+            mode, inputs = self.processor.prepare_document_inputs(file_path, max_pages=2)
+            if mode != "vision" or not isinstance(inputs, list) or not inputs:
+                return None
+
+            user_content: List[Dict[str, Any]] = [{
+                "type": "text",
+                "text": (
+                    "Транскрибируй ТОЧНО весь видимый текст документа, включая ВСЕ цифры "
+                    "(номера, счета, УИН, ИНН, БИК), ФИО и даты. Пиши точно как напечатано, "
+                    "без исправлений, без пропусков и без комментариев. Выведи только текст."
+                ),
+            }]
+            for uri in inputs:
+                user_content.append({"type": "image_url", "image_url": {"url": uri}})
+
+            base_name = os.path.basename(file_path)
+            start_t = time.perf_counter()
+            with self.rate_limiter:
+                resp = client.chat.completions.create(
+                    model=self.model_name,
+                    messages=[
+                        {"role": "system", "content": "Ты — точный OCR-транскрайбер юридических документов."},
+                        {"role": "user", "content": user_content},
+                    ],
+                    temperature=0.0,
+                )
+            latency = time.perf_counter() - start_t
+            usage = resp.usage
+            self.tracker.record_call(
+                model=self.model_name,
+                prompt_tokens=usage.prompt_tokens if usage else 0,
+                completion_tokens=usage.completion_tokens if usage else 0,
+                total_tokens=usage.total_tokens if usage else 0,
+                latency_sec=latency,
+                is_cache_hit=False,
+                stage_name="ocr_transcribe",
+                doc_name=base_name,
+            )
+            text = (resp.choices[0].message.content or "").strip()
+            return text if len(text) >= 50 else None
+        except Exception as e:
+            logger.debug(f"OCR-транскрипция для сверки не выполнена ('{file_path}'): {e}")
+            return None
+
     extract_raw_text_for_audit = _extract_raw_text_for_audit
 
     def _get_client(self):
@@ -770,6 +830,20 @@ class LegalDocPlatformFacade:
             if quality_status == "excellent":
                 quality_status = "high"
 
+        # S-13: расхождения кросс-модального гейта (реквизиты не подтверждены
+        # текстовым слоем/транскрипцией) — штраф 5 п.п. за каждое, максимум 15
+        halluc_count = len(zt_report.details.get("hallucination_discrepancies") or [])
+        if halluc_count:
+            penalty = min(15.0, 5.0 * halluc_count)
+            quality_score = max(0.0, round(float(quality_score) - penalty, 2))
+            issues.append({
+                "field": "cross_modal",
+                "severity": "WARNING",
+                "message": f"Кросс-модальный гейт: {halluc_count} реквизит(ов) не подтверждены текстом документа (-{penalty:.0f} п.п.)",
+            })
+            if quality_status == "excellent":
+                quality_status = "high"
+
         validation["issues"] = issues
         return validation, quality_score, quality_status
 
@@ -826,6 +900,12 @@ class LegalDocPlatformFacade:
 
         # 4. Zero-Trust Верификация (контрольные суммы, математика, хронология, кросс-модальный аудит)
         raw_text = self._extract_raw_text_for_audit(file_path)
+        if not raw_text:
+            # S-13: для сканов без текстового слоя — второй VLM-проход (точная транскрипция)
+            # как эталон для кросс-модальной сверки реквизитов
+            ext = os.path.splitext(file_path)[1].lower()
+            if ext in SUPPORTED_IMAGE_EXTS or ext == ".pdf":
+                raw_text = self._transcribe_scan_for_audit(file_path)
         # M-06: детекция низкого DPI скана для статуса ocr_low_confidence
         scan_dpi = None
         if os.path.splitext(file_path)[1].lower() in SUPPORTED_IMAGE_EXTS:

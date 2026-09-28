@@ -75,16 +75,31 @@ def verify_amounts_reconciliation(
 
 
 def parse_percentage_value(percent_str: str) -> Optional[float]:
-    """Extract numeric percentage from Russian string (e.g. '50%', '25% ежемесячно')."""
+    """
+    Extract numeric percentage from Russian string.
+    Понимает проценты ('50%', '25% ежемесячно') и законные дробные доли
+    ('1/4 заработка', '2/3 дохода') — S-10: ранее дроби молча пропускали
+    проверку лимитов 229-ФЗ (алименты удерживаются именно в долях).
+    """
     if not percent_str:
         return None
-    match = re.search(r"(\d+(?:[.,]\d+)?)\s*%", percent_str)
+    s = str(percent_str)
+    match = re.search(r"(\d+(?:[.,]\d+)?)\s*%", s)
     if match:
         val_str = match.group(1).replace(",", ".")
         try:
             return float(val_str)
         except ValueError as e:
             logger.debug(f"Не удалось разобрать процентное значение '{percent_str}': {e}")
+        return None
+
+    # Дробная доля: N/D, где D <= 12 и N <= D (отсекает номера ИП вида 10701/16/3001)
+    frac = re.search(r"\b(\d{1,2})\s*/\s*(\d{1,2})(?!\d)", s)
+    if frac:
+        num, den = int(frac.group(1)), int(frac.group(2))
+        if 0 < num <= den <= 12:
+            return round(num * 100.0 / den, 2)
+        logger.debug(f"Дробь '{frac.group(0)}' в '{percent_str}' не является долей удержания")
     return None
 
 

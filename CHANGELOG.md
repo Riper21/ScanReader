@@ -6,6 +6,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — Recognition guards (S-10…S-13): закрытие слепых зон распознавания
+
+### Added
+- **S-13 OCR cross-check for scans:** images without a text layer now get a second VLM pass
+  ("exact transcription") used as the reference in the cross-modal gate — garbled names, УИН,
+  ИП/ИЛ numbers no longer pass silently. Controlled by `SCANREADER_OCR_CROSSCHECK` (default on).
+  Each unconfirmed requisite applies a −5 pp quality penalty (capped at 15).
+
+### Fixed
+- **S-10:** Fractional withholding rates (`1/4`, `1/3`, `1/2`, `2/3` of income) now participate in
+  the 229-FZ statutory limits check — alimony-deduction documents were previously exempt from control.
+  IP numbers (`10701/16/3001-ИП`) are explicitly excluded from fraction parsing.
+- **S-11:** Slash dates (`21/04/2016`) are parsed; garbage dates in any date field produce an
+  `UNPARSEABLE_DATE` warning instead of silently disabling chronology checks.
+- **S-12:** Cross-checks added: УИН must embed the РОСП code (`UIN_ROSP_MISMATCH`),
+  ОКТМО length (8/11), КПП length (9), бланк ИЛ number length (8–9 digits),
+  case numbers without separators score 60 instead of 100 (glue suspicion).
+
 ## [Unreleased] — Scan quality remediation (S-1…S-8, кейс 745×1024 @ 96 DPI)
 
 Root cause analysis of a real 96 DPI scan with garbled requisites (lost `/` in IP numbers,

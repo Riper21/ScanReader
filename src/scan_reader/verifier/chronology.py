@@ -44,6 +44,15 @@ def parse_flexible_date(date_raw: str) -> Optional[datetime.date]:
         except ValueError as e:
             logger.debug(f"Некорректная дата '{date_raw}': {e}")
 
+    # Format: DD/MM/YYYY (S-11: VLM периодически возвращает даты через слэш;
+    # \b-границы + строгая валидация месяца/дня отсекают номера ИП вида 10701/16/3001)
+    m_slash = re.search(r"(?:^|[^\w/])(\d{1,2})/(\d{1,2})/(\d{4})(?![\d/])", s)
+    if m_slash:
+        try:
+            return datetime.date(int(m_slash.group(3)), int(m_slash.group(2)), int(m_slash.group(1)))
+        except ValueError as e:
+            logger.debug(f"Некорректная слэш-дата '{date_raw}': {e}")
+
     # Format: DD <month_ru> YYYY
     for m_name, m_num in _MONTHS_RU.items():
         if m_name in s:

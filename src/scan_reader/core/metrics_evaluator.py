@@ -130,12 +130,18 @@ def validate_inn_string(details_str: Optional[str]) -> Tuple[bool, Optional[str]
 
 
 def validate_case_number_format(case_num: Optional[str]) -> Tuple[bool, float]:
-    """Проверяет формат судебного дела (А40-1234/2021, 2-123/2020 и т.д.)."""
+    """
+    Проверяет формат судебного дела (А40-1234/2021, 2-123/2020 и т.д.).
+    S-12: длинные номера без разделителей («-», «/») подозрительны —
+    VLM мог склеить или исказить номер; оценка снижается до 60.
+    """
     if not case_num:
         return False, 0.0
     c_str = str(case_num).strip()
     pattern = r"^[А-Яа-я0-9A-Za-z\s\№\-\–\—\/\.]+$"
     if re.match(pattern, c_str) and len(c_str) >= 4 and any(c.isdigit() for c in c_str):
+        if len(c_str) >= 6 and "/" not in c_str and "-" not in c_str and "–" not in c_str:
+            return True, 60.0
         return True, 100.0
     return False, 40.0
 
