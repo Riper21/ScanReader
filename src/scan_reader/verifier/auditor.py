@@ -288,11 +288,30 @@ class ZeroTrustAuditor:
                 details["hallucination_discrepancies"] = discrepancies
             details["gate_executed"] = True
             details["gate_source"] = gate_source or "text_layer"
+            if details["gate_source"] == "vlm_transcription":
+                # Эталон получен той же моделью, что и извлечение, поэтому ошибки
+                # распознавания неотделимы от ошибок извлечения: это НЕ независимая
+                # сверка. Гейт полезен (ловит правки и склейки реквизитов), но его
+                # результат нельзя предъявлять как подтверждение исходным текстом.
+                details["gate_independent"] = False
+                issues.append(
+                    VerificationIssue(
+                        "warning",
+                        "GATE_REFERENCE_FROM_VLM",
+                        "Эталон гейта получен VLM-транскрипцией, а не независимым OCR: "
+                        "ошибки распознавания неотделимы от ошибок извлечения. "
+                        "Для независимой сверки установите extra [ocr].",
+                        "gate",
+                    )
+                )
+            else:
+                details["gate_independent"] = True
         else:
             # Отсутствие эталона фиксируется явно: раньше молчаливый пропуск гейта давал
             # zero_trust_verified, хотя кросс-модальная сверка не выполнялась вовсе.
             details["gate_executed"] = False
             details["gate_source"] = None
+            details["gate_independent"] = False
             details["gate_expected"] = gate_expected
             if gate_expected:
                 issues.append(

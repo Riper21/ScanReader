@@ -75,6 +75,7 @@ from .verifier.auditor import ZeroTrustAuditor
 from .verifier.status import VerificationIssue, VerificationReport, VerificationStatus
 from .core.io_utils import mask_secret
 from .core.guardrails import run_guardrails
+from .core.ocr import get_ocr_engine
 
 
 def _extraction_failed(base_name: str, reason: str) -> Dict[str, Any]:
@@ -206,6 +207,50 @@ class LegalDocPlatformFacade:
 
         self.auditor = ZeroTrustAuditor()
         self._client: Optional[Any] = None
+
+    def _reference_text_for_gate(self, file_path: str) -> Tuple[Optional[str], str]:
+        """
+        C-02/Фаза 4: эталонный текст для кросс-модального гейта.
+
+        Канал выбирается по убыванию надёжности, и ПРОИСХОЖДЕНИЕ возвращается
+        явно, чтобы отчёт не выдавал VLM-транскрипцию за OCR:
+
+          1. "text_layer"          — текстовый слой DOCX/TXT/PDF: точен, стоит ноль;
+          2. "ocr"                 — независимый OCR-канал (Фаза 4, extra [ocr]);
+          3. "vlm_transcription"   — S-13, второй проход VLM: та же модель, что и
+             извлечение, поэтому ошибки распознавания НЕ ОТДЕЛЯЮТСЯ от ошибок
+             извлечения. Только последний резерв;
+          4. None / "none"         — эталон недоступен, гейт не выполнится.
+
+        :returns: (текст, источник)
+        """
+        ext = os.path.splitext(file_path)[1].lower()
+
+        if ext in SUPPORTED_TEXT_EXTS or ext in SUPPORTED_WORD_EXTS or ext == ".pdf":
+            layer = self._extract_raw_text_for_audit(file_path)
+            if layer and layer.strip():
+                return layer, "text_layer"
+
+        if self._ocr_enabled():
+            recognized = get_ocr_engine().text(file_path)
+            if recognized and len(recognized.strip()) >= 20:
+                return recognized, "ocr"
+
+        # S-13: резервный проход VLM. Включается по умолчанию, но его вклад
+        # помечается в отчёте отдельным источником.
+        if os.getenv("SCANREADER_OCR_CROSSCHECK", "true").lower() in ("true", "1", "yes"):
+            transcribed = self._transcribe_scan_for_audit(file_path)
+            if transcribed:
+                return transcribed, "vlm_transcription"
+
+        return None, "none"
+
+    def _ocr_enabled(self) -> bool:
+        """OCR можно принудительно отключить, не размонтируя extra."""
+        flag = os.getenv("SCANREADER_OCR_ENABLED", "true").lower()
+        if flag not in ("true", "1", "yes"):
+            return False
+        return get_ocr_engine().available()
 
     def _extract_raw_text_for_audit(self, file_path: str) -> Optional[str]:
         """Безопасное извлечение текстового слоя (DOCX, TXT, PDF text layer) для кросс-модальной проверки."""
@@ -868,16 +913,7 @@ class LegalDocPlatformFacade:
             quality_status = doc_eval.get("status", "excellent")
 
         # 4. Zero-Trust Верификация (контрольные суммы, математика, хронология, кросс-модальный аудит)
-        raw_text = self._extract_raw_text_for_audit(file_path)
-        gate_source: Optional[str] = "text_layer" if raw_text else None
-        if not raw_text:
-            # S-13: для сканов без текстового слоя — второй VLM-проход (точная транскрипция)
-            # как эталон для кросс-модальной сверки реквизитов
-            ext = os.path.splitext(file_path)[1].lower()
-            if ext in SUPPORTED_IMAGE_EXTS or ext == ".pdf":
-                raw_text = self._transcribe_scan_for_audit(file_path)
-                if raw_text:
-                    gate_source = "vlm_transcription"
+        raw_text, gate_source = self._reference_text_for_gate(file_path)
         # M-06: детекция низкого DPI скана для статуса ocr_low_confidence
         scan_dpi = None
         if os.path.splitext(file_path)[1].lower() in SUPPORTED_IMAGE_EXTS:

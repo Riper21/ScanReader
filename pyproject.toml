@@ -44,6 +44,11 @@ keywords = [
 ]
 
 [project.optional-dependencies]
+# OCR для кросс-модальной верификации сканов. Без него проект работает, но
+# гейт для изображений опирается только на VLM-транскрипцию (независимый канал).
+ocr = ["rapidocr-onnxruntime>=1.3"]
+# Полный вариант: PaddleOCR с поддержкой GPU и большим языковым покрытием.
+ocr-full = ["paddleocr>=2.7", "paddlepaddle>=2.5"]
 dev = [
     "build>=1.0",
     "mypy>=1.13",

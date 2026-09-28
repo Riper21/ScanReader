@@ -140,8 +140,12 @@ def run_diagnostics(verbose: bool = False, check_vlm: bool = True) -> Dict[str, 
 
     core_deps = ("pydantic", "openai", "PIL", "fitz", "openpyxl", "dotenv")
     optional_deps = ("pandas", "docx")
+    # OCR-движки отмечаются отдельно и НЕ влияют на статус: отсутствие
+    # независимого OCR снижает качество сверки, но не делает конфигурацию
+    # неработоспособной — проект полностью функционален без него.
+    ocr_candidates = ("rapidocr_onnxruntime", "paddleocr")
     dependencies: Dict[str, bool] = {}
-    for mod in core_deps + optional_deps:
+    for mod in core_deps + optional_deps + ocr_candidates:
         try:
             __import__(mod)
             dependencies[mod] = True
@@ -163,6 +167,19 @@ def run_diagnostics(verbose: bool = False, check_vlm: bool = True) -> Dict[str, 
             vlm_check["status"] = "warning"
             vlm_check["error"] = str(e)
 
+    # OCR: Фаза 4. Отсутствие движка не является ошибкой конфигурации, но
+    # означает, что кросс-модальный гейт для сканов не имеет независимого
+    # канала и будет опираться на VLM-транскрипцию.
+    from .ocr import get_ocr_engine
+
+    ocr_check: Dict[str, Any] = {"status": "disabled"}
+    if os.getenv("SCANREADER_OCR_ENABLED", "true").lower() in ("true", "1", "yes"):
+        ocr_diag = get_ocr_engine().diagnostics()
+        ocr_check = dict(ocr_diag)
+        ocr_check["status"] = "ok" if ocr_diag.get("installed") else "not_installed"
+    else:
+        ocr_check = {"status": "disabled", "installed": False}
+
     if missing_core:
         status = "error"
     elif missing_optional or vlm_check.get("status") != "ok":
@@ -176,6 +193,7 @@ def run_diagnostics(verbose: bool = False, check_vlm: bool = True) -> Dict[str, 
         "directories": directories,
         "dependencies": dependencies,
         "vlm": vlm_check,
+        "ocr": ocr_check,
     }
     if status == "error":
         report["error"] = f"Missing core dependencies: {', '.join(missing_core)}"
