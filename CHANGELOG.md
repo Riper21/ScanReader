@@ -6,6 +6,68 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] - 2026-09-29
+
+Cross-modal gate honesty on real Russian text: inflection and money formats.
+
+### Fixed
+
+- A surname in the nominative case was never corroborated by the inflected
+  document wording ("Иванов" against "Взыскать с должника Иванова Ивана
+  Ивановича"), because the gate required an exact word boundary. The
+  inflected-stem match now tolerates case endings of up to 3 letters (4 for
+  soft "-ий/-ый/-ой" stems like "Римский" -> "Римского", and stem-replacing
+  feminine endings "Ромашка" -> "Ромашки"), while values shorter than 5
+  characters are not inflected at all — "Иван" still cannot be confirmed
+  inside "Иванов", and "Иванов" cannot be confirmed inside "Ивановский".
+- A whole-ruble amount returned as a JSON number with ".0" ("5075.0") was
+  never corroborated by the accounting format "5 075,00": the digit atom
+  "507500" loses the decimal position, and the int candidate "5075" did not
+  match. Amounts and short identifiers (INN, SNILS, OGRN) are now compared
+  numerically; formatting cannot mask a match, and a tenfold error cannot
+  pass either. 20-digit accounts still compare digit-by-digit (float is not
+  precise enough there).
+- The digit fallback previously confirmed a *different* amount: the atom
+  "507500" produced by "5 075,00" corroborated a claimed "507500" through
+  digit-stripping. For values that parse unambiguously as numbers, the
+  digit-strip path is no longer consulted.
+- The batch-stage marker reported "[OK ...]" for documents whose extraction
+  had failed; stage 5 counted failed extractions as "успешно обработано".
+- A failed extraction set `requires_human_review: false` — a document with
+  no extracted data cannot be accepted without a human.
+- `scan-reader run <directory>` rejected the directory despite the help
+  text ("Путь к файлу скана или каталогу"); directories are now dispatched
+  to the batch pipeline with aggregated exit codes.
+- `.gif` files were silently skipped by directory discovery (13 of 14 files
+  found, no warning). GIF is now a supported image extension, and skipped
+  unsupported files are reported.
+
+### Changed
+
+- `check_presence_in_raw_text` restructured: letter values go through
+  exact pattern, inflection, then insertion-tolerant fuzzy; numeric values
+  through numeric equality first, digit atoms only for identifiers and
+  accounts. `normalize_token` (separator-stripping search form) is removed
+  as dead code, together with the duplicated `MIN_REFERENCE_LENGTH`.
+- CLI batch runs: all FAILED -> exit 1; any `discrepancy_detected` or
+  `gate_not_executed` -> exit 3; any `heuristic_fallback` -> exit 4.
+
+### Added
+
+- `scripts/corpus/`: adversarial measurement harness for the open risks
+  (routing by messy filenames, gate false positives under OCR noise,
+  page-limit behaviour, registry I/O volume), deterministic under a seed.
+  Clean-reference false positives: 0.0 %; degradation curve and caveats in
+  `docs/measurements/risks-0.9.2.md`.
+
+### Tests
+
+660 tests (was 623). Inflection (nominative/genitive/soft/feminine,
+cross-person and short-token negatives), kopecks formats for whole and
+fractional amounts, tenfold-error rejection, CLI directory runs and exit
+codes, honest stage-5 counters, GIF discovery, human-review flag for
+failed extractions, and a smoke test of the measurement harness.
+
 ## [0.9.1] - 2026-09-28
 
 Verification honesty and plugin isolation. **Breaking:** verification

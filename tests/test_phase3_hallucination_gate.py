@@ -14,7 +14,6 @@ from scan_reader.verifier.hallucination_gate import (
     _numeric_candidates,
     audit_cross_modal_consistency,
     check_presence_in_raw_text,
-    normalize_token,
 )
 from scan_reader.verifier.spec import VerificationSpec
 
@@ -95,11 +94,6 @@ def _fields(raw=RAW, **kwargs):
 # =========================================================================
 # Нормализация и атомы
 # =========================================================================
-def test_normalize_token_strips_separators():
-    assert normalize_token("«Иванов И.И.»") == "ивановии"
-    assert normalize_token("7701-234-567") == "7701234567"
-
-
 def test_numeric_atoms_respect_group_boundaries():
     """Группы цифр НЕ склеиваются в один атом."""
     atoms = _numeric_atoms("224 616,01 руб. и 7707083893")
@@ -227,6 +221,77 @@ def test_ocr_damage_single_letter_is_tolerated():
     """Одна ошибка распознавания не должна превращаться в расхождение."""
     doc = {"debtor": {"name": "Иванова Иван Иванович"}}
     assert "debtor.name" not in _fields(**doc)
+
+
+# =========================================================================
+# 0.9.2: падежная терпимость фамилий и суммы с копейками
+# =========================================================================
+GENITIVE_RAW = "Взыскать с должника Иванова Ивана Ивановича, ИНН 7707083893."
+
+
+@pytest.mark.parametrize("value", ["Иванов", "иванов", "ИВАНОВ"])
+def test_surname_confirmed_in_any_declension_form(value):
+    """VLM отдаёт именительный падеж, документ склоняет фамилию."""
+    assert check_presence_in_raw_text(value, GENITIVE_RAW) is True
+
+
+def test_soft_ending_surname_confirmed_in_genitive():
+    """«-ский/-ый/-ой» склоняются с изменением основы: «Римский» -> «Римского»."""
+    assert check_presence_in_raw_text("Римский", "по постановлению Римского суда") is True
+    assert check_presence_in_raw_text("Заводской", "в лице директора Заводского") is True
+
+
+def test_organization_name_confirmed_in_genitive():
+    assert check_presence_in_raw_text("Ромашка", "в пользу ООО «Ромашки»") is True
+
+
+def test_inflection_does_not_confirm_different_person():
+    """Суффикс длиннее 3 букв — уже другая фамилия («Ивановский»)."""
+    assert check_presence_in_raw_text("Иванов", "Ивановский проспект, д. 1") is False
+
+
+def test_short_name_still_not_confirmed_inside_longer_word():
+    """Порог 5 символов: «Иван» не подтверждается внутри «Иванов»."""
+    assert check_presence_in_raw_text("Иван", "СИДОРОВ ИВАНОВ ИВАНОВИЧ") is False
+
+
+def test_declined_court_name_is_corroborated():
+    """Наименование суда в документе тоже склоняется."""
+    doc = {"court": {"name": "Ленинский районный суд"}}
+    raw = "ПОСТАНОВЛЕНИЕ Ленинского районного суда от 12.04.2023."
+    assert audit_cross_modal_consistency(doc, raw, _spec()) == []
+
+
+AMOUNT_RAW = "Итого к удержанию: 5 075,00 руб. Основание: ст. 99 ФЗ-229."
+
+
+@pytest.mark.parametrize(
+    "value",
+    [5075, 5075.0, "5075", "5075.0", "5075.00", "5 075,00"],
+)
+def test_whole_ruble_amount_confirmed_against_kopecks_format(value):
+    """VLM отдаёт целое с «.0», документ печатает «5 075,00» — та же сумма."""
+    assert check_presence_in_raw_text(value, AMOUNT_RAW) is True
+
+
+def test_amount_numeric_mismatch_is_rejected():
+    assert check_presence_in_raw_text(5076.0, AMOUNT_RAW) is False
+    assert check_presence_in_raw_text(507500.0, AMOUNT_RAW) is False
+
+
+def test_fractional_amount_confirmed_against_kopecks_format():
+    assert check_presence_in_raw_text(5075.5, "Итого к удержанию: 5 075,50 руб.") is True
+
+
+def test_whole_amount_via_gate_produces_no_findings():
+    doc = {"finances": {"total_rub": 5075.0}}
+    assert audit_cross_modal_consistency(doc, AMOUNT_RAW, _spec()) == []
+
+
+def test_declined_party_via_gate_produces_no_findings():
+    doc = {"debtor": {"name": "Иванов Иван Иванович"}}
+    raw = "Взыскать с должника Иванова Ивана Ивановича, ИНН 7707083893."
+    assert audit_cross_modal_consistency(doc, raw, _spec()) == []
 
 
 # =========================================================================

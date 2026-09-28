@@ -29,7 +29,7 @@ from .core.io_utils import MAX_INPUT_BYTES, InputFileError
 
 logger = get_logger("file_processor")
 
-SUPPORTED_IMAGE_EXTS: Set[str] = {".jpg", ".jpeg", ".jfif", ".jpe", ".png", ".webp", ".bmp", ".tiff", ".tif"}
+SUPPORTED_IMAGE_EXTS: Set[str] = {".jpg", ".jpeg", ".jfif", ".jpe", ".png", ".webp", ".bmp", ".tiff", ".tif", ".gif"}
 SUPPORTED_PDF_EXTS: Set[str] = {".pdf"}
 SUPPORTED_OFFICE_EXTS: Set[str] = SUPPORTED_TEXT_EXTS | SUPPORTED_WORD_EXTS
 ALL_SUPPORTED_EXTS: Set[str] = SUPPORTED_IMAGE_EXTS | SUPPORTED_PDF_EXTS | SUPPORTED_OFFICE_EXTS
@@ -349,11 +349,29 @@ class FileProcessor:
 
 
 def scan_directory_for_documents(directory_path: str) -> List[str]:
-    """Рекурсивно находит все поддерживаемые файлы в директории."""
+    """Рекурсивно находит все поддерживаемые файлы в директории.
+
+    Неподдерживаемые файлы не пропускаются молча: их перечень попадает в
+    лог, иначе «найдено 13 из 14» выглядит как потеря документа (кейс
+    холодного прогона: .gif молча исчез из пакета).
+    """
     found_files = []
+    skipped: Dict[str, List[str]] = {}
     for root, _, files in os.walk(directory_path):
         for f in sorted(files):
             ext = os.path.splitext(f)[1].lower()
             if ext in ALL_SUPPORTED_EXTS:
                 found_files.append(os.path.join(root, f))
+            elif f.startswith("."):
+                continue  # служебные (.gitkeep, .checkpoint) — не документы
+            else:
+                skipped.setdefault(ext or "(без расширения)", []).append(f)
+    if skipped:
+        total = sum(len(names) for names in skipped.values())
+        detail = ", ".join(f"{ext}: {len(names)} шт." for ext, names in sorted(skipped.items()))
+        logger.warning(
+            "Пропущено %d неподдерживаемых файлов в %s (%s). "
+            "Поддерживаются: %s",
+            total, directory_path, detail, ", ".join(sorted(ALL_SUPPORTED_EXTS)),
+        )
     return found_files

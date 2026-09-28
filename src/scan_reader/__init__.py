@@ -12,7 +12,7 @@ from . import config as _config
 
 _config.load_environment()
 
-__version__ = "0.9.1"
+__version__ = "0.9.2"
 
 from .facade import LegalDocPlatformFacade  # noqa: E402
 from .file_processor import FileProcessor  # noqa: E402

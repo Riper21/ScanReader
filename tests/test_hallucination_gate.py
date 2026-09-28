@@ -6,14 +6,8 @@ Tests for Cross-Modal Anti-Hallucination Gate.
 from scan_reader.verifier.hallucination_gate import (
     audit_cross_modal_consistency,
     check_presence_in_raw_text,
-    normalize_token,
 )
 from scan_reader.verifier.spec import VerificationSpec
-
-
-def test_normalize_token():
-    assert normalize_token("«Иванов И.И.»") == "ивановии"
-    assert normalize_token("7701-234-567") == "7701234567"
 
 
 def test_check_presence():

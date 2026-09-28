@@ -105,22 +105,99 @@ def _emit_error(msg: str, code: int = EXIT_ERROR, is_json: bool = False) -> int:
 # SUBCOMMAND HANDLERS
 # =============================================================================
 
+def _resolve_output_dir(args: argparse.Namespace) -> str:
+    """Каталог результатов: явный -o, либо легаси «Результаты», либо output."""
+    if args.output_dir:
+        return args.output_dir
+    legacy_results = os.path.join(os.getcwd(), "Результаты")
+    default_output = os.path.join(os.getcwd(), "output")
+    if os.path.exists(legacy_results) and not os.path.exists(default_output):
+        return legacy_results
+    return default_output
+
+
+def _result_exit_code(result: Dict[str, Any]) -> int:
+    """
+    Код возврата по одному результату обработки (контракт C-10 + C-08).
+
+    Провальная экстракция обязана давать EXIT_ERROR: код 0 при пустых данных
+    говорил бы 1С, что документ обработан успешно.
+    """
+    if result.get("status") == "FAILED":
+        return EXIT_ERROR
+    zt_status = result.get("zero_trust_status")
+    if zt_status in ("discrepancy_detected", "gate_not_executed"):
+        # Реквизиты не подтверждены исходным текстом: автоимпорт недопустим.
+        return EXIT_DISCREPANCY
+    if zt_status == "heuristic_fallback":
+        return EXIT_FALLBACK
+    return EXIT_OK
+
+
+def _batch_exit_code(results: List[Dict[str, Any]]) -> int:
+    """
+    Агрегированный код возврата пакета.
+
+    Приоритет: сбой (1) важнее расхождения (3) важнее эвристики (4) —
+    незавершённая обработка важнее найденных расхождений в завершённых.
+    Пустой пакет — тоже ошибка: поддерживаемых документов не нашлось.
+    """
+    if not results:
+        return EXIT_ERROR
+    codes = [_result_exit_code(r) for r in results]
+    if EXIT_ERROR in codes:
+        return EXIT_ERROR
+    if EXIT_DISCREPANCY in codes:
+        return EXIT_DISCREPANCY
+    if EXIT_FALLBACK in codes:
+        return EXIT_FALLBACK
+    return EXIT_OK
+
+
+def _handle_run_directory(args: argparse.Namespace, scan_dir: Path) -> int:
+    """Пакетная обработка каталога: help обещал «файл или каталог» (0.9.2)."""
+    output_dir = _resolve_output_dir(args)
+    facade = LegalDocPlatformFacade()
+    facade.results_dir = output_dir
+
+    try:
+        results = facade.process_batch(str(scan_dir), organize_subfolders=False)
+    except Exception as e:
+        sys.stderr.write(f"[ОШИБКА] Сбой пакетной обработки '{scan_dir.name}': {mask_secret(str(e))}\n")
+        if getattr(args, "verbose", False):
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+        return EXIT_ERROR
+
+    if getattr(args, "json_mode", False):
+        _emit_json(results)
+    elif results:
+        failed = sum(1 for r in results if r.get("status") == "FAILED")
+        sys.stdout.write(
+            f"Обработано документов: {len(results)} (сбоев: {failed}). "
+            f"Реестры: {os.path.abspath(output_dir)}\n"
+        )
+        registry = os.path.join(output_dir, "all_documents_registry.json")
+        if os.path.exists(registry):
+            sys.stdout.write(f"{os.path.abspath(registry)}\n")
+        sys.stdout.flush()
+    else:
+        sys.stderr.write(f"[ОШИБКА] Поддерживаемых документов не найдено: {scan_dir}\n")
+
+    return _batch_exit_code(results)
+
+
 def handle_run(args: argparse.Namespace) -> int:
     """Process a single document or directory of documents."""
     scan_file = Path(args.scan_path).resolve()
-    if not scan_file.is_file():
+    if not scan_file.exists():
         sys.stderr.write(f"[ОШИБКА] Входной файл не найден: {scan_file}\n")
         return EXIT_ERROR
 
-    if args.output_dir:
-        output_dir = args.output_dir
-    else:
-        legacy_results = os.path.join(os.getcwd(), "Результаты")
-        default_output = os.path.join(os.getcwd(), "output")
-        if os.path.exists(legacy_results) and not os.path.exists(default_output):
-            output_dir = legacy_results
-        else:
-            output_dir = default_output
+    if scan_file.is_dir():
+        return _handle_run_directory(args, scan_file)
+
+    output_dir = _resolve_output_dir(args)
     facade = LegalDocPlatformFacade()
     facade.results_dir = output_dir
 
@@ -142,15 +219,7 @@ def handle_run(args: argparse.Namespace) -> int:
 
         if getattr(args, "json_mode", False):
             _emit_json(result)
-            zt_status = result.get("zero_trust_status")
-            if zt_status == "discrepancy_detected":
-                return EXIT_DISCREPANCY
-            if zt_status == "gate_not_executed":
-                # Реквизиты не подтверждены исходным текстом: автоимпорт недопустим.
-                return EXIT_DISCREPANCY
-            if zt_status == "heuristic_fallback":
-                return EXIT_FALLBACK
-            return EXIT_OK
+            return _result_exit_code(result)
 
         if args.format == "stdout":
             if os.path.exists(flat_json_path):
@@ -203,16 +272,7 @@ def handle_run(args: argparse.Namespace) -> int:
             sys.stdout.write(f"{os.path.abspath(target)}\n")
 
         sys.stdout.flush()
-
-        zt_status = result.get("zero_trust_status")
-        if zt_status == "discrepancy_detected":
-            return EXIT_DISCREPANCY
-        if zt_status == "gate_not_executed":
-            # Реквизиты не подтверждены исходным текстом: автоимпорт недопустим.
-            return EXIT_DISCREPANCY
-        if zt_status == "heuristic_fallback":
-            return EXIT_FALLBACK
-        return EXIT_OK
+        return _result_exit_code(result)
 
     except Exception as e:
         sys.stderr.write(f"[ОШИБКА] Сбой при обработке документа '{scan_file.name}': {mask_secret(str(e))}\n")
@@ -484,7 +544,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Тип документа: 'auto', 'salary_deductions', 'executive_documents', 'enforcement_orders'"
     )
     run_parser.add_argument("-o", "--output-dir", default=None, help="Каталог для результатов")
-    run_parser.add_argument("--json", dest="json_mode", action="store_true", help="Вывести полный JSON результат")
+    run_parser.add_argument(
+        "--json", dest="json_mode", action="store_true",
+        help="Вывести полный JSON результат (для каталога — список результатов)",
+    )
 
     # Command: classify
     class_parser = subparsers.add_parser("classify", help="Классифицировать документ по шапке и якорям")

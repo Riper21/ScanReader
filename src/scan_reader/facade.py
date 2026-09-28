@@ -1052,7 +1052,11 @@ class LegalDocPlatformFacade:
         # в учёт как подтверждённый.
         from .core.verification_export import requires_human_review
 
-        review_needed = requires_human_review({"zero_trust": zt_report.to_dict()})
+        # Провальная экстракция требует человека всегда: данных нет,
+        # автопринятие невозможно (Правило 8 — честность статусов).
+        review_needed = extraction_failed or requires_human_review(
+            {"zero_trust": zt_report.to_dict()}
+        )
         if extraction_failed:
             doc_status = "FAILED"
         elif doc_type == UNKNOWN_CATEGORY or review_needed:
@@ -1232,7 +1236,10 @@ class LegalDocPlatformFacade:
                     dur = round(time.perf_counter() - t_start, 2)
                     q_score = res.get("quality_score_percent", 0.0)
                     zt_status = res.get("zero_trust_status", "vlm_unverified")
-                    print(f" [OK {dur}s | Качество: {q_score}% | ZT: {zt_status}]")
+                    # [OK] и [ОШИБКА] обязаны различаться: маркировка провала
+                    # как OK прятала сбои экстракции в сводке этапа.
+                    marker = "[ОШИБКА" if res.get("status") == "FAILED" else "[OK"
+                    print(f" {marker} {dur}s | Качество: {q_score}% | ZT: {zt_status}]")
                     save_checkpoint(cat_results, checkpoint_file)
                 except Exception as e:
                     dur = round(time.perf_counter() - t_start, 2)
@@ -1280,7 +1287,11 @@ class LegalDocPlatformFacade:
         """[Этап 5/6] Расчет метрик качества и сводный отчет запуска."""
         print("\n" + "=" * 78)
         print("[Этап 5/6] Расчет метрик качества (Quality Score %) и Guardrails...")
-        print(f" • Успешно обработано: {len(results) - error_count} | Сбоев: {error_count}")
+        # Счёт по статусам результатов, а не по исключениям: документ со
+        # status=FAILED возвращается штатно и раньше считался «успешным».
+        completed = sum(1 for r in results if r.get("status") != "FAILED")
+        failed = sum(1 for r in results if r.get("status") == "FAILED")
+        print(f" • Успешно обработано: {completed} | Сбоев: {failed + error_count}")
 
         all_category_metrics: Dict[str, Dict[str, Any]] = {}
         for cat_k in grouped_files:
