@@ -21,6 +21,32 @@ def _as_dict(val: Any) -> Dict[str, Any]:
     return val if isinstance(val, dict) else {}
 
 
+_EMPTY_STRINGS = ("", "none", "null", "nan")
+
+
+def _first_present(source: Any, *keys: str) -> Any:
+    """
+    Возвращает значение ПЕРВОГО ключа, который реально присутствует и не является
+    пустым представлением отсутствия.
+
+    Нужен потому, что `d.get("a") or d.get("b")` отбрасывает легитимные нули:
+    0.0, 0 и "0" — falsy. Долг, списанный полностью, нулевая госпошлина и нулевой
+    итог молча выпадали из сверки, а отчёт утверждал, что сверка не выполнялась.
+
+    Пустыми считаются только None и строковые "empty-like" заглушки, пришедшие от
+    VLM ("", "None", "null"); числа (включая 0) и непустые строки значимы.
+    """
+    d = _as_dict(source)
+    for key in keys:
+        val = d.get(key)
+        if val is None:
+            continue
+        if isinstance(val, str) and val.strip().lower() in _EMPTY_STRINGS:
+            continue
+        return val
+    return None
+
+
 class ZeroTrustAuditor:
     """
     Independent Zero-Trust Verification Engine.
@@ -239,7 +265,7 @@ class ZeroTrustAuditor:
                 issues.append(VerificationIssue("error", "INVALID_BIK", msg, "bik"))
 
         # Bank account check (C-15: validate_bank_account)
-        account = pay_details.get("payment_account") or pay_details.get("account")
+        account = _first_present(pay_details, "payment_account", "account")
         if account and bik:
             ok_acc, msg_acc = validate_bank_account(str(account), str(bik))
             _bump(ok_acc)
@@ -324,10 +350,15 @@ class ZeroTrustAuditor:
 
     @classmethod
     def _audit_finances(cls, data: Dict[str, Any], issues: List[VerificationIssue], details: Dict[str, Any]) -> None:
-        fin = _as_dict(data.get("finances") or data.get("financials"))
-        debt = fin.get("debt_amount_rub") or fin.get("principal_rub")
-        fee = fin.get("fee_penalty_rub") or fin.get("penalty_rub")
-        total = fin.get("total_deduction_rub") or fin.get("total_rub")
+        # C-05: контейнер выбирается по типу, а не по truthiness — пустой словарь
+        # из VLM не должен переключать выбор на другой источник.
+        fin_src = data.get("finances")
+        if not isinstance(fin_src, dict):
+            fin_src = data.get("financials")
+        fin = _as_dict(fin_src)
+        debt = _first_present(fin, "debt_amount_rub", "principal_rub")
+        fee = _first_present(fin, "fee_penalty_rub", "penalty_rub")
+        total = _first_present(fin, "total_deduction_rub", "total_rub")
 
         # 1. Court amounts reconciliation.
         # math_verified_ok выставляется ТОЛЬКО когда сверка действительно сравнивала
@@ -415,15 +446,19 @@ class ZeroTrustAuditor:
                 )
 
         # Deduction Percentage Check
-        pct_str = fin.get("deduction_percentage") or data.get("deduction_percentage") or ""
-        if pct_str:
-            is_alimony = "алимент" in str(
-                data.get("claim_subject") or data.get("claim") or data.get("subject") or ""
-            ).lower()
-            ok_pct, msg_pct = verify_deduction_percentage(pct_str, has_alimony_or_harm=is_alimony)
+        # C-05: 0% — значимое значение (долг погашен полностью), а не «процент не указан».
+        pct_val_raw = _first_present(fin, "deduction_percentage")
+        if pct_val_raw is None:
+            pct_val_raw = data.get("deduction_percentage")
+        if pct_val_raw is not None and str(pct_val_raw).strip().lower() not in _EMPTY_STRINGS:
+            is_alimony = any(
+                marker in str(_first_present(data, "claim_subject", "claim", "subject") or "").lower()
+                for marker in ("алимент", "несовершеннолетн", "ребен", "содержание", "вред")
+            )
+            ok_pct, msg_pct = verify_deduction_percentage(str(pct_val_raw), has_alimony_or_harm=is_alimony)
             if not ok_pct:
                 # M-04: severity определяется по данным (значению процента), а не по тексту сообщения
-                pct_val = parse_percentage_value(str(pct_str))
+                pct_val = parse_percentage_value(str(pct_val_raw))
                 severity = "error" if (pct_val is not None and pct_val > 70.0) else "warning"
                 issues.append(VerificationIssue(severity, "STATUTORY_LIMIT_ALERT", msg_pct, "deduction_percentage"))
 
