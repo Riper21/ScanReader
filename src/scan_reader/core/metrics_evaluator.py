@@ -25,9 +25,11 @@ from typing import Dict, Any, List, Optional, Tuple
 
 from .utils import get_logger
 from .io_utils import write_atomic
+from .guardrails import get_nested as _get_nested, run_guardrails, validate_ip_number_format  # noqa: F401
 # C-06: контрольная сумма ИНН берётся из verifier, а не дублируется в core.
 # Пакет verifier зависит только от stdlib, поэтому циклического импорта нет.
 from ..verifier.checksums import validate_inn
+from ..verifier.math_verifier import parse_percentage_value, verify_deduction_percentage
 
 logger = get_logger("core.metrics_evaluator")
 
@@ -104,6 +106,132 @@ def numeric_proximity_score(pred: Optional[float], gt: Optional[float], toleranc
 
 
 # ==============================================================================
+# 1b. ЕДИНЫЙ СКОРЕР ПОЛЕЙ (C-06)
+# ==============================================================================
+
+# benchmark.json плагинов объявляет type из словаря {string, date, inn, number},
+# а код понимал только {exact, numeric} и всё прочее отправлял в строковое
+# сравнение. В итоге десятикратная ошибка в сумме давала 98.32% и статус
+# "excellent": difflib сравнивал строки "240000" и "2400000".
+FIELD_TYPE_ALIASES = {
+    "exact": "exact", "strict": "exact", "id": "exact",
+    "string": "text", "text": "text", "fuzzy": "text", "name": "text",
+    "numeric": "numeric", "number": "numeric", "int": "numeric",
+    "float": "numeric", "money": "numeric", "amount": "numeric",
+    "currency": "numeric", "percentage": "numeric", "rub": "numeric",
+    "inn": "inn", "snils": "inn", "ogrn": "inn", "ogrnip": "inn",
+    "date": "date", "datetime": "date",
+}
+
+KNOWN_FIELD_TYPES = frozenset(FIELD_TYPE_ALIASES) | {"bool", "boolean"}
+
+
+def resolve_field_type(declared: Any) -> str:
+    """Приводит объявленный в benchmark.json тип поля к каноническому виду."""
+    return FIELD_TYPE_ALIASES.get(str(declared or "").strip().lower(), "text")
+
+
+def _to_number_loose(value: Any) -> Optional[float]:
+    """Числовое значение поля: строки вида «1 234,56» и числа."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    s = re.sub(r"[^\d,.\-]", "", str(value))
+    if not s:
+        return None
+    if "," in s and "." in s:
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif "," in s:
+        tail = s.split(",")[-1]
+        s = s.replace(",", ".") if len(tail) in (1, 2) else s.replace(",", "")
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _normalized_date(value: Any) -> Optional[str]:
+    """ISO-представление даты; None, если значение не является датой."""
+    from ..verifier.chronology import parse_flexible_date
+
+    parsed = parse_flexible_date(str(value or ""))
+    return parsed.isoformat() if parsed else None
+
+
+def _is_blank(value: Any) -> bool:
+    """Пустое значение: None, пустая строка или строка-заглушка от VLM."""
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip() or value.strip().lower() in ("none", "null", "nan")
+    return False
+
+
+def score_field(
+    pred: Any,
+    gt: Any,
+    declared_type: Any = None,
+) -> Tuple[Optional[float], str, str]:
+    """
+    Сравнение одного поля извлечения с эталоном.
+
+    :returns: (score, kind, state), где
+        score  — 0..100 либо None, если поле неприменимо;
+        kind   — канонический тип поля;
+        state  — "scored" | "absent_both" | "hallucination" | "missed".
+
+    Семантика знаменателя (C-06). Раньше поле, пустое с обеих сторон, давало 100.0,
+    и почти пустое извлечение набирало «идеальную» точность: 8 отсутствующих полей
+    при одном совпавшем. Присвоение 0.0 тоже неверно — модель не должна
+    наказываться за то, что не выдумала поле, которого в документе нет.
+
+    Поэтому знаменатель образуют поля, ПРИСУТСТВУЮЩИЕ в эталоне:
+        - есть в эталоне и в извлечении — оценивается по существу;
+        - есть в эталоне, нет в извлечении — промах, 0.0;
+        - нет в эталоне, есть в извлечении — галлюцинация, штраф;
+        - нет с обеих сторон — исключается из знаменателя.
+    """
+    kind = resolve_field_type(declared_type)
+    pred_blank, gt_blank = _is_blank(pred), _is_blank(gt)
+
+    if gt_blank and pred_blank:
+        return None, kind, "absent_both"
+    if gt_blank:
+        return 0.0, kind, "hallucination"
+    if pred_blank:
+        return 0.0, kind, "missed"
+
+    if kind == "numeric":
+        p_num, g_num = _to_number_loose(pred), _to_number_loose(gt)
+        if p_num is None or g_num is None:
+            return 0.0, kind, "scored"
+        return numeric_proximity_score(p_num, g_num), kind, "scored"
+
+    if kind == "inn":
+        p_digits = re.sub(r"\D", "", str(pred))
+        g_digits = re.sub(r"\D", "", str(gt))
+        if not p_digits or p_digits != g_digits:
+            return 0.0, kind, "scored"
+        ok, _msg = validate_inn(p_digits)
+        return (100.0 if ok else 50.0), kind, "scored"
+
+    if kind == "date":
+        p_date, g_date = _normalized_date(pred), _normalized_date(gt)
+        if p_date is None or g_date is None:
+            return 0.0, kind, "scored"
+        return (100.0 if p_date == g_date else 0.0), kind, "scored"
+
+    if kind == "exact":
+        return exact_match_score(pred, gt), kind, "scored"
+
+    return text_similarity_score(pred, gt), kind, "scored"
+
+
+# ==============================================================================
 # 2. АВТОНОМНЫЕ ВАЛИДАТОРЫ И ПРОВЕРКИ РЕКВИЗИТОВ (GUARDRAILS)
 # ==============================================================================
 
@@ -148,16 +276,10 @@ def validate_case_number_format(case_num: Optional[str]) -> Tuple[bool, float]:
     return False, 40.0
 
 
-def validate_ip_number_format(ip_num: Optional[str]) -> Tuple[bool, float]:
-    """Проверяет формат исполнительного производства (ХХХХХ/ГГ/ДД/РЕГИОН)."""
-    if not ip_num:
-        return False, 0.0
-    i_str = str(ip_num).strip()
-    if "/" in i_str and any(c.isdigit() for c in i_str):
-        return True, 100.0
-    if len(i_str) >= 4 and any(c.isdigit() for c in i_str):
-        return True, 80.0
-    return False, 30.0
+
+# validate_ip_number_format переехал в core.guardrails (импортируется выше),
+# чтобы существовал единственный исполнитель правил autonomous.json.
+# re-export сохранён для обратной совместимости внешних вызовов.
 
 
 _MONTH_NAMES = (
@@ -237,337 +359,37 @@ def validate_math_balance(
         return True, 0.0, 90.0
 
 
-def validate_deduction_rate(rate_str: Optional[str]) -> Tuple[bool, float]:
-    """Проверяет процент удержания по 229-ФЗ (25%, 50%, 70%, 1/4)."""
+def validate_deduction_rate(rate_str: Optional[str], claim_subject: str = "") -> Tuple[bool, float]:
+    """
+    Проверка процента удержания по ст. 99 229-ФЗ.
+
+    C-06: функция была проверкой наличия ключевых слов и дублировала
+    verifier.math_verifier, с которым при этом расходилась: любое значение с
+    «доля» в тексте получало 90.0, поэтому «80%» и «100%» — заведомо
+    незаконные величины — проходили как корректные. Теперь используется
+    единственный алгоритмический источник правды.
+    """
     if not rate_str:
         return False, 0.0
-    r_str = str(rate_str).strip()
-    if any(k in r_str for k in ["50%", "25%", "70%", "1/4", "1/3", "1/2", "30%", "20%"]):
+    subject = str(claim_subject or "").lower()
+    has_basis = any(
+        marker in subject
+        for marker in ("алимент", "несовершеннолетн", "ребен", "содержание", "вред")
+    )
+    ok, _msg = verify_deduction_percentage(str(rate_str), has_alimony_or_harm=has_basis)
+    value = parse_percentage_value(str(rate_str))
+    if ok:
         return True, 100.0
-    if "%" in r_str or "доля" in r_str or "доли" in r_str or "заработк" in r_str:
-        return True, 90.0
+    # Превышение 70% — безусловное нарушение закона, между 50% и 70% требует
+    # основания, остальное — подозрительно, но не заведомо неверно.
+    if value is not None and value > 70.0:
+        return False, 0.0
     return False, 40.0
 
 
 # ==============================================================================
 # 3. ОЦЕНКА ДОКУМЕНТОВ В РЕЖИМЕ BENCHMARK (VS GROUND TRUTH)
 # ==============================================================================
-
-def evaluate_executive_document_benchmark(pred: Dict[str, Any], gt: Dict[str, Any]) -> Dict[str, Any]:
-    c_pred = pred.get("court") or {}
-    c_gt = gt.get("court") or {}
-    cl_pred = pred.get("claimant") or {}
-    cl_gt = gt.get("claimant") or {}
-    db_pred = pred.get("debtor") or {}
-    db_gt = gt.get("debtor") or {}
-    f_pred = pred.get("finances") or pred.get("financials") or {}
-    f_gt = gt.get("finances") or gt.get("financials") or {}
-
-    scores = {
-        "Номер дела": exact_match_score(pred.get("case_number"), gt.get("case_number")),
-        "Дата судебного акта": exact_match_score(pred.get("act_date"), gt.get("act_date")),
-        "Суд (Наименование)": text_similarity_score(c_pred.get("name"), c_gt.get("name")),
-        "Суд (Адрес)": text_similarity_score(c_pred.get("address"), c_gt.get("address")),
-        "Взыскатель (Наименование/ФИО)": text_similarity_score(cl_pred.get("name"), cl_gt.get("name")),
-        "Взыскатель (Реквизиты)": text_similarity_score(cl_pred.get("details"), cl_gt.get("details")),
-        "Должник (Наименование/ФИО)": text_similarity_score(db_pred.get("name"), db_gt.get("name")),
-        "Должник (Реквизиты)": text_similarity_score(db_pred.get("details"), db_gt.get("details")),
-        "Предмет иска": text_similarity_score(pred.get("claim_subject"), gt.get("claim_subject")),
-        "Резолюция суда": text_similarity_score(pred.get("decision_summary"), gt.get("decision_summary")),
-        "Основной долг": numeric_proximity_score(f_pred.get("main_debt_rub"), f_gt.get("main_debt_rub")),
-        "Пени / Проценты": numeric_proximity_score(f_pred.get("interest_penalty_rub"), f_gt.get("interest_penalty_rub")),
-        "Госпошлина / Сбор": numeric_proximity_score(f_pred.get("court_fee_rub"), f_gt.get("court_fee_rub")),
-        "Итоговая сумма": numeric_proximity_score(f_pred.get("total_rub"), f_gt.get("total_rub")),
-        "Серия бланка Гознака": exact_match_score(pred.get("blank_series"), gt.get("blank_series")),
-        "Номер бланка Гознака": exact_match_score(pred.get("blank_number"), gt.get("blank_number")),
-    }
-
-    weights = {
-        "Номер дела": 0.10, "Дата судебного акта": 0.05, "Суд (Наименование)": 0.08, "Суд (Адрес)": 0.02,
-        "Взыскатель (Наименование/ФИО)": 0.10, "Взыскатель (Реквизиты)": 0.06,
-        "Должник (Наименование/ФИО)": 0.10, "Должник (Реквизиты)": 0.06,
-        "Предмет иска": 0.06, "Резолюция суда": 0.06,
-        "Основной долг": 0.07, "Пени / Проценты": 0.03, "Госпошлина / Сбор": 0.03, "Итоговая сумма": 0.10,
-        "Серия бланка Гознака": 0.04, "Номер бланка Гознака": 0.05,
-    }
-
-    total_weight = sum(weights.values())
-    weighted_total = sum((scores[k] * (weights[k] / total_weight)) for k in scores)
-    return {
-        "file_name": gt.get("file_name", pred.get("file_name", "")),
-        "mode": "benchmark",
-        "overall_score": round(weighted_total, 2),
-        "field_scores": scores,
-        "validation_passed": True
-    }
-
-
-def evaluate_enforcement_document_benchmark(pred: Dict[str, Any], gt: Dict[str, Any]) -> Dict[str, Any]:
-    fssp_pred = pred.get("fssp") or pred.get("authority") or {}
-    fssp_gt = gt.get("fssp") or gt.get("authority") or {}
-    c_pred = pred.get("court") or {}
-    c_gt = gt.get("court") or {}
-    cl_pred = pred.get("claimant") or {}
-    cl_gt = gt.get("claimant") or {}
-    db_pred = pred.get("debtor") or {}
-    db_gt = gt.get("debtor") or {}
-    f_pred = pred.get("finances") or {}
-    f_gt = gt.get("finances") or {}
-
-    scores = {
-        "Вид документа": text_similarity_score(pred.get("doc_type"), gt.get("doc_type")),
-        "Дата документа": exact_match_score(pred.get("doc_date"), gt.get("doc_date")),
-        "Номер ИП / Входящий": text_similarity_score(pred.get("ip_number") or pred.get("reg_number"), gt.get("ip_number") or gt.get("reg_number")),
-        "Орган ФССП": text_similarity_score(fssp_pred.get("name"), fssp_gt.get("name")),
-        "Пристав / Должностное лицо": text_similarity_score(fssp_pred.get("officer"), fssp_gt.get("officer")),
-        "Суд-основание": text_similarity_score(c_pred.get("name"), c_gt.get("name")),
-        "Номер судебного дела": text_similarity_score(c_pred.get("case_number"), c_gt.get("case_number")),
-        "Взыскатель": text_similarity_score(cl_pred.get("name"), cl_gt.get("name")),
-        "Реквизиты взыскателя": text_similarity_score(cl_pred.get("details"), cl_gt.get("details")),
-        "Должник": text_similarity_score(db_pred.get("name"), db_gt.get("name")),
-        "Реквизиты должника": text_similarity_score(db_pred.get("details"), db_gt.get("details")),
-        "Предмет исполнения": text_similarity_score(pred.get("claim_subject"), gt.get("claim_subject")),
-        "Основной долг": numeric_proximity_score(f_pred.get("main_debt_rub"), f_gt.get("main_debt_rub")),
-        "Судебные расходы": numeric_proximity_score(f_pred.get("court_costs_rub"), f_gt.get("court_costs_rub")),
-        "Итоговая сумма требований": numeric_proximity_score(f_pred.get("total_rub"), f_gt.get("total_rub")),
-    }
-
-    weights = {
-        "Вид документа": 0.05, "Дата документа": 0.05, "Номер ИП / Входящий": 0.10, "Орган ФССП": 0.08,
-        "Пристав / Должностное лицо": 0.04, "Суд-основание": 0.06, "Номер судебного дела": 0.08,
-        "Взыскатель": 0.10, "Реквизиты взыскателя": 0.06, "Должник": 0.10, "Реквизиты должника": 0.06,
-        "Предмет исполнения": 0.07, "Основной долг": 0.07, "Судебные расходы": 0.03,
-        "Итоговая сумма требований": 0.06,
-    }
-
-    total_weight = sum(weights.values())
-    weighted_total = sum((scores[k] * (weights[k] / total_weight)) for k in scores)
-    return {
-        "file_name": gt.get("file_name", pred.get("file_name", "")),
-        "mode": "benchmark",
-        "overall_score": round(weighted_total, 2),
-        "field_scores": scores,
-        "validation_passed": True
-    }
-
-
-def evaluate_salary_document_benchmark(pred: Dict[str, Any], gt: Dict[str, Any]) -> Dict[str, Any]:
-    auth_pred = pred.get("authority") or {}
-    auth_gt = gt.get("authority") or {}
-    emp_pred = pred.get("employer") or {}
-    emp_gt = gt.get("employer") or {}
-    f_pred = pred.get("finances") or {}
-    f_gt = gt.get("finances") or {}
-
-    scores = {
-        "Дата постановления": exact_match_score(pred.get("doc_date"), gt.get("doc_date")),
-        "Номер ИП": text_similarity_score(pred.get("ip_number"), gt.get("ip_number")),
-        "Орган исполнения": text_similarity_score(auth_pred.get("name"), auth_gt.get("name")),
-        "Юрисдикция": text_similarity_score(auth_pred.get("jurisdiction"), auth_gt.get("jurisdiction")),
-        "Работодатель": text_similarity_score(emp_pred.get("name"), emp_gt.get("name")),
-        "Адрес работодателя": text_similarity_score(emp_pred.get("address"), emp_gt.get("address")),
-        "Взыскатель": text_similarity_score(pred.get("claimant_name"), gt.get("claimant_name")),
-        "Должник (Сотрудник)": text_similarity_score(pred.get("debtor_name"), gt.get("debtor_name")),
-        "Реквизиты должника": text_similarity_score(pred.get("debtor_details"), gt.get("debtor_details")),
-        "Предмет взыскания": text_similarity_score(pred.get("claim_subject"), gt.get("claim_subject")),
-        "Процент удержания": text_similarity_score(f_pred.get("deduction_percentage"), f_gt.get("deduction_percentage")),
-        "Основной долг": numeric_proximity_score(f_pred.get("debt_amount_rub"), f_gt.get("debt_amount_rub")),
-        "Исполнительский сбор": numeric_proximity_score(f_pred.get("fee_penalty_rub"), f_gt.get("fee_penalty_rub")),
-        "Итого к удержанию": numeric_proximity_score(f_pred.get("total_deduction_rub"), f_gt.get("total_deduction_rub")),
-        "Первичный судебный акт": text_similarity_score(pred.get("base_doc"), gt.get("base_doc")),
-    }
-
-    weights = {
-        "Дата постановления": 0.05, "Номер ИП": 0.10, "Орган исполнения": 0.08, "Юрисдикция": 0.04,
-        "Работодатель": 0.08, "Адрес работодателя": 0.04, "Взыскатель": 0.10, "Должник (Сотрудник)": 0.10,
-        "Реквизиты должника": 0.05, "Предмет взыскания": 0.06, "Процент удержания": 0.10,
-        "Основной долг": 0.06, "Исполнительский сбор": 0.04, "Итого к удержанию": 0.06,
-        "Первичный судебный акт": 0.05,
-    }
-
-    total_weight = sum(weights.values())
-    weighted_total = sum((scores[k] * (weights[k] / total_weight)) for k in scores)
-    return {
-        "file_name": gt.get("file_name", pred.get("file_name", "")),
-        "mode": "benchmark",
-        "overall_score": round(weighted_total, 2),
-        "field_scores": scores,
-        "validation_passed": True
-    }
-
-
-# ==============================================================================
-# 4. АВТОНОМНАЯ ОЦЕНКА КАЧЕСТВА БЕЗ GROUND TRUTH (AUTONOMOUS QUALITY SCORE)
-# ==============================================================================
-
-def evaluate_executive_document_autonomous(doc: Dict[str, Any]) -> Dict[str, Any]:
-    c = doc.get("court") or {}
-    cl = doc.get("claimant") or {}
-    db = doc.get("debtor") or {}
-    f = doc.get("finances") or {}
-
-    _, case_score = validate_case_number_format(doc.get("case_number"))
-    _, date_score = validate_date_string(doc.get("act_date"))
-    _, _, cl_inn_score = validate_inn_string(cl.get("details"))
-    _, _, db_inn_score = validate_inn_string(db.get("details"))
-    is_bal, _, bal_score = validate_math_balance(
-        f.get("main_debt_rub"), f.get("interest_penalty_rub"), f.get("court_fee_rub"), f.get("other_rub"), f.get("total_rub")
-    )
-
-    scores = {
-        "Номер дела": case_score,
-        "Дата судебного акта": date_score,
-        "Суд (Наименование)": 100.0 if len(str(c.get("name", "")).strip()) > 3 else (50.0 if c.get("name") else 0.0),
-        "Суд (Адрес)": 100.0 if len(str(c.get("address", "")).strip()) > 3 else (60.0 if c.get("address") else 0.0),
-        "Взыскатель (Наименование/ФИО)": 100.0 if len(str(cl.get("name", "")).strip()) > 2 else 0.0,
-        "Взыскатель (Реквизиты и ИНН)": cl_inn_score,
-        "Должник (Наименование/ФИО)": 100.0 if len(str(db.get("name", "")).strip()) > 2 else 0.0,
-        "Должник (Реквизиты и ИНН)": db_inn_score,
-        "Предмет иска": 100.0 if len(str(doc.get("claim_subject", "")).strip()) > 3 else 0.0,
-        "Резолюция суда": 100.0 if len(str(doc.get("decision_summary", "")).strip()) > 3 else 0.0,
-        "Основной долг": 100.0 if f.get("main_debt_rub") is not None else 80.0,
-        "Пени / Проценты": 100.0 if f.get("interest_penalty_rub") is not None else 90.0,
-        "Госпошлина / Сбор": 100.0 if f.get("court_fee_rub") is not None else 90.0,
-        "Итоговая сумма и Баланс": bal_score,
-        "Серия бланка Гознака": 100.0 if doc.get("blank_series") else 70.0,
-        "Номер бланка Гознака": 100.0 if doc.get("blank_number") else 70.0,
-    }
-
-    weights = {
-        "Номер дела": 0.10, "Дата судебного акта": 0.05, "Суд (Наименование)": 0.08, "Суд (Адрес)": 0.02,
-        "Взыскатель (Наименование/ФИО)": 0.10, "Взыскатель (Реквизиты и ИНН)": 0.06,
-        "Должник (Наименование/ФИО)": 0.10, "Должник (Реквизиты и ИНН)": 0.06,
-        "Предмет иска": 0.06, "Резолюция суда": 0.06,
-        "Основной долг": 0.07, "Пени / Проценты": 0.03, "Госпошлина / Сбор": 0.03, "Итоговая сумма и Баланс": 0.10,
-        "Серия бланка Гознака": 0.04, "Номер бланка Гознака": 0.05,
-    }
-
-    total_weight = sum(weights.values())
-    weighted_total = sum((scores[k] * (weights[k] / total_weight)) for k in scores)
-    return {
-        "file_name": doc.get("file_name", ""),
-        "mode": "autonomous",
-        "overall_score": round(weighted_total, 2),
-        "field_scores": scores,
-        "validation_passed": bool(is_bal and case_score >= 70.0 and date_score >= 70.0)
-    }
-
-
-def evaluate_enforcement_document_autonomous(doc: Dict[str, Any]) -> Dict[str, Any]:
-    fssp = doc.get("fssp") or doc.get("authority") or {}
-    c = doc.get("court") or {}
-    cl = doc.get("claimant") or {}
-    db = doc.get("debtor") or {}
-    f = doc.get("finances") or {}
-
-    _, date_score = validate_date_string(doc.get("doc_date"))
-    _, ip_score = validate_ip_number_format(doc.get("ip_number") or doc.get("reg_number"))
-    _, _, cl_inn_score = validate_inn_string(cl.get("details"))
-    _, _, db_inn_score = validate_inn_string(db.get("details"))
-    is_bal, _, bal_score = validate_math_balance(
-        f.get("main_debt_rub"), f.get("court_costs_rub"), None, None, f.get("total_rub")
-    )
-
-    scores = {
-        "Вид документа": 100.0 if doc.get("doc_type") else 0.0,
-        "Дата документа": date_score,
-        "Номер ИП / Входящий": ip_score,
-        "Орган ФССП": 100.0 if len(str(fssp.get("name", "")).strip()) > 3 else 0.0,
-        "Пристав / Должностное лицо": 100.0 if fssp.get("officer") else 60.0,
-        "Суд-основание": 100.0 if c.get("name") else 60.0,
-        "Номер судебного дела": 100.0 if c.get("case_number") else 60.0,
-        "Взыскатель": 100.0 if len(str(cl.get("name", "")).strip()) > 2 else 0.0,
-        "Реквизиты взыскателя": cl_inn_score,
-        "Должник": 100.0 if len(str(db.get("name", "")).strip()) > 2 else 0.0,
-        "Реквизиты должника": db_inn_score,
-        "Предмет исполнения": 100.0 if doc.get("claim_subject") else 50.0,
-        "Основной долг": 100.0 if f.get("main_debt_rub") is not None else 80.0,
-        "Судебные расходы": 100.0 if f.get("court_costs_rub") is not None else 90.0,
-        "Итоговая сумма и Баланс": bal_score,
-    }
-
-    weights = {
-        "Вид документа": 0.05, "Дата документа": 0.06, "Номер ИП / Входящий": 0.10, "Орган ФССП": 0.08,
-        "Пристав / Должностное лицо": 0.04, "Суд-основание": 0.06, "Номер судебного дела": 0.08,
-        "Взыскатель": 0.10, "Реквизиты взыскателя": 0.06, "Должник": 0.10, "Реквизиты должника": 0.06,
-        "Предмет исполнения": 0.07, "Основной долг": 0.07, "Судебные расходы": 0.03,
-        "Итоговая сумма и Баланс": 0.07,
-    }
-
-    total_weight = sum(weights.values())
-    weighted_total = sum((scores[k] * (weights[k] / total_weight)) for k in scores)
-    return {
-        "file_name": doc.get("file_name", ""),
-        "mode": "autonomous",
-        "overall_score": round(weighted_total, 2),
-        "field_scores": scores,
-        "validation_passed": bool(is_bal and date_score >= 70.0)
-    }
-
-
-def evaluate_salary_document_autonomous(doc: Dict[str, Any]) -> Dict[str, Any]:
-    auth = doc.get("authority") or {}
-    emp = doc.get("employer") or {}
-    f = doc.get("finances") or {}
-
-    _, date_score = validate_date_string(doc.get("doc_date"))
-    _, ip_score = validate_ip_number_format(doc.get("ip_number"))
-    _, rate_score = validate_deduction_rate(f.get("deduction_percentage"))
-    _, _, db_inn_score = validate_inn_string(doc.get("debtor_details"))
-    is_bal, _, bal_score = validate_math_balance(
-        f.get("debt_amount_rub"), f.get("fee_penalty_rub"), None, None, f.get("total_deduction_rub")
-    )
-
-    scores = {
-        "Дата постановления": date_score,
-        "Номер ИП": ip_score,
-        "Орган исполнения": 100.0 if len(str(auth.get("name", "")).strip()) > 3 else 0.0,
-        "Юрисдикция": 100.0 if auth.get("jurisdiction") else 70.0,
-        "Работодатель": 100.0 if len(str(emp.get("name", "")).strip()) > 2 else 0.0,
-        "Адрес работодателя": 100.0 if emp.get("address") else 60.0,
-        "Взыскатель": 100.0 if len(str(doc.get("claimant_name", "")).strip()) > 2 else 0.0,
-        "Должник (Сотрудник)": 100.0 if len(str(doc.get("debtor_name", "")).strip()) > 2 else 0.0,
-        "Реквизиты должника": db_inn_score,
-        "Предмет взыскания": 100.0 if doc.get("claim_subject") else 50.0,
-        "Процент удержания (229-ФЗ)": rate_score,
-        "Основной долг": 100.0 if f.get("debt_amount_rub") is not None else 80.0,
-        "Исполнительский сбор": 100.0 if f.get("fee_penalty_rub") is not None else 90.0,
-        "Итого к удержанию и Баланс": bal_score,
-        "Первичный судебный акт": 100.0 if doc.get("base_doc") else 60.0,
-    }
-
-    weights = {
-        "Дата постановления": 0.05, "Номер ИП": 0.10, "Орган исполнения": 0.08, "Юрисдикция": 0.04,
-        "Работодатель": 0.08, "Адрес работодателя": 0.04, "Взыскатель": 0.10, "Должник (Сотрудник)": 0.10,
-        "Реквизиты должника": 0.05, "Предмет взыскания": 0.06, "Процент удержания (229-ФЗ)": 0.10,
-        "Основной долг": 0.06, "Исполнительский сбор": 0.04, "Итого к удержанию и Баланс": 0.06,
-        "Первичный судебный акт": 0.05,
-    }
-
-    total_weight = sum(weights.values())
-    weighted_total = sum((scores[k] * (weights[k] / total_weight)) for k in scores)
-    return {
-        "file_name": doc.get("file_name", ""),
-        "mode": "autonomous",
-        "overall_score": round(weighted_total, 2),
-        "field_scores": scores,
-        "validation_passed": bool(is_bal and rate_score >= 80.0)
-    }
-
-
-def _get_nested(d: Dict[str, Any], path: str) -> Any:
-    """Извлечение вложенного значения по точечному пути (например 'finances.total_rub')."""
-    if not isinstance(d, dict) or not path:
-        return None
-    parts = path.split(".")
-    curr: Any = d
-    for p in parts:
-        if isinstance(curr, dict):
-            curr = curr.get(p)
-        else:
-            return None
-    return curr
-
 
 def evaluate_generic_benchmark(
     pred: Dict[str, Any],
@@ -590,6 +412,12 @@ def evaluate_generic_benchmark(
             logger.debug(f"Не удалось загрузить плагин '{doc_type}' для оценки: {e}")
 
     bench_fields = plugin.benchmark_config.get("fields", []) if plugin else []
+    absent_on_both: List[str] = []
+    hallucinated: List[str] = []
+    missed: List[str] = []
+    gt_weight = 0.0
+    earned = 0.0
+    penalty = 0.0
 
     if bench_fields:
         for f in bench_fields:
@@ -597,49 +425,63 @@ def evaluate_generic_benchmark(
             if not path:
                 continue
             weight = float(f.get("weight", 1.0))
-            m_type = f.get("type", "fuzzy")
             label = f.get("label", path)
 
-            val_ext = _get_nested(pred, path)
-            val_gt = _get_nested(gt, path)
-
-            if val_ext is None and val_gt is None:
-                sim = 100.0
-            elif val_ext is None or val_gt is None:
-                sim = 0.0
-            elif m_type == "exact":
-                sim = exact_match_score(val_ext, val_gt)
-            elif m_type == "numeric":
-                sim = numeric_proximity_score(val_ext, val_gt)
-            else:
-                sim = text_similarity_score(val_ext, val_gt)
-
-            scores[label] = round(sim, 2)
+            sim, kind, state = score_field(_get_nested(pred, path), _get_nested(gt, path), f.get("type"))
+            if state == "absent_both":
+                absent_on_both.append(label)
+                continue
+            if state == "hallucination":
+                hallucinated.append(label)
+                penalty += weight
+                scores[label] = 0.0
+                continue
+            if state == "missed":
+                missed.append(label)
+            gt_weight += weight
+            earned += (sim or 0.0) * weight / 100.0
+            scores[label] = round(sim or 0.0, 2)
             weights[label] = weight
     else:
         # Fallback при отсутствии конфига: динамическое попарное сравнение ключей эталона
         for k, gt_val in gt.items():
             if k in ("file_name", "doc_type"):
                 continue
-            pred_val = pred.get(k)
-            if isinstance(gt_val, (int, float)):
-                sim = numeric_proximity_score(pred_val, gt_val)
-            elif isinstance(gt_val, dict):
-                sim = 100.0 if exact_match_score(pred_val, gt_val) == 100.0 else text_similarity_score(str(pred_val), str(gt_val))
-            else:
-                sim = text_similarity_score(pred_val, gt_val)
-            scores[k] = round(sim, 2)
+            declared = "numeric" if isinstance(gt_val, (int, float)) and not isinstance(gt_val, bool) else None
+            sim, _kind, state = score_field(pred.get(k), gt_val, declared)
+            if state == "absent_both":
+                absent_on_both.append(k)
+                continue
+            if state == "hallucination":
+                hallucinated.append(k)
+                penalty += 1.0
+                continue
+            if state == "missed":
+                missed.append(k)
+            gt_weight += 1.0
+            earned += (sim or 0.0) / 100.0
+            scores[k] = round(sim or 0.0, 2)
             weights[k] = 1.0
 
-    total_weight = sum(weights.values())
-    weighted_total = sum((scores[k] * (weights[k] / total_weight)) for k in scores) if total_weight > 0 else 100.0
+    # C-06: знаменатель — вес полей, реально присутствующих в эталоне. При
+    # отсутствии таких полей оценка не состоялась и не должна выглядеть как
+    # идеальная точность.
+    overall = (earned - penalty) / gt_weight * 100.0 if gt_weight > 0 else 0.0
+    overall = max(0.0, min(100.0, overall))
 
     return {
         "file_name": gt.get("file_name", pred.get("file_name", "")),
         "mode": "benchmark",
-        "overall_score": round(weighted_total, 2),
+        "overall_score": round(overall, 2),
         "field_scores": scores,
-        "validation_passed": bool(weighted_total >= 70.0)
+        "evaluator": "generic",
+        "benchmark_config_consumed": bool(bench_fields),
+        "fields_in_ground_truth": int(gt_weight),
+        "fields_absent_on_both_sides": absent_on_both,
+        "fields_hallucinated": hallucinated,
+        "fields_missed": missed,
+        "hallucination_penalty": round(penalty, 2),
+        "validation_passed": bool(overall >= 70.0 and not hallucinated),
     }
 
 
@@ -649,11 +491,13 @@ def evaluate_generic_autonomous(
 ) -> Dict[str, Any]:
     """
     Универсальная автономная оценка качества на основе autonomous.json плагина.
-    (Устраняет дефект C-06: проверяет поля соответствующего типа документа).
-    """
-    scores: Dict[str, float] = {}
-    weights: Dict[str, float] = {}
 
+    C-06: используется тот же core.guardrails.run_guardrails, что и в
+    LegalDocPlatformFacade.validate_document. Раньше здесь жила вторая копия
+    правил с другим словарём и веткой «просто проверь на непустоту» для всего
+    остального, из-за чего одно поле получало противоположные вердикты в двух
+    путях, а нереализованные правила молча считались пройденными.
+    """
     plugin = None
     if doc_type:
         from ..type_registry import get_registry
@@ -663,35 +507,21 @@ def evaluate_generic_autonomous(
             logger.debug(f"Не удалось загрузить плагин '{doc_type}' для оценки: {e}")
 
     rules = plugin.autonomous_config.get("fields", []) if plugin else []
+    result = run_guardrails(rules, doc, plugin_id=plugin.id if plugin else "")
 
-    if rules:
-        for r in rules:
-            f_path = r.get("field", "")
-            if not f_path:
-                continue
-            rule = r.get("rule", "required")
-            val = _get_nested(doc, f_path)
-
-            score = 0.0
-            if rule in ("required", "not_empty"):
-                score = 100.0 if val not in (None, "", [], {}) else 0.0
-            elif rule == "date_format":
-                _, score = validate_date_string(val)
-            elif rule == "positive_number":
-                try:
-                    num = float(str(val).replace(" ", "").replace(",", "."))
-                    score = 100.0 if num > 0 else 0.0
-                except (ValueError, TypeError):
-                    score = 0.0
-            elif rule == "valid_inn":
-                _, _, score = validate_inn_string(val)
-            else:
-                score = 100.0 if val not in (None, "", [], {}) else 0.0
-
-            scores[f_path] = score
+    scores = {issue["field"]: 0.0 for issue in result["issues"]}
+    weights = {issue["field"]: 1.0 for issue in result["issues"]}
+    for rule in rules or []:
+        if not isinstance(rule, dict):
+            continue
+        f_path = rule.get("field", "")
+        if f_path and f_path not in scores:
+            scores[f_path] = 100.0
             weights[f_path] = 1.0
-    else:
+
+    if not rules:
         # Completeness fallback: проверка заполненности ключей
+        scores, weights = {}, {}
         for k, v in doc.items():
             if k in ("file_name", "doc_type"):
                 continue
@@ -699,59 +529,38 @@ def evaluate_generic_autonomous(
             weights[k] = 1.0
 
     total_weight = sum(weights.values())
-    weighted_total = sum((scores[k] * (weights[k] / total_weight)) for k in scores) if total_weight > 0 else 100.0
+    # C-06: при пустом наборе правил оценка не состоялась и не равна 100.0.
+    weighted_total = (sum((scores[k] * (weights[k] / total_weight)) for k in scores)
+                      if total_weight > 0 else 0.0)
 
     return {
         "file_name": doc.get("file_name", ""),
         "mode": "autonomous",
         "overall_score": round(weighted_total, 2),
         "field_scores": scores,
-        "validation_passed": bool(weighted_total >= 70.0)
+        "evaluator": "generic",
+        "autonomous_config_consumed": bool(rules),
+        "rules_unknown": result["rules_unknown"],
+        "evaluator_degraded": total_weight == 0,
+        "validation_passed": bool(weighted_total >= 70.0 and result["passed"]),
     }
 
 
-BENCHMARK_EVALUATORS = {
-    "executive": evaluate_executive_document_benchmark,
-    "executive_documents": evaluate_executive_document_benchmark,
-    "enforcement": evaluate_enforcement_document_benchmark,
-    "enforcement_orders": evaluate_enforcement_document_benchmark,
-    "salary": evaluate_salary_document_benchmark,
-    "salary_deductions": evaluate_salary_document_benchmark,
-    "commercial_contracts": lambda p, g: evaluate_generic_benchmark(p, g, "commercial_contracts"),
-    "invoices_upd": lambda p, g: evaluate_generic_benchmark(p, g, "invoices_upd"),
-    "acceptance_certificates": lambda p, g: evaluate_generic_benchmark(p, g, "acceptance_certificates"),
-    "powers_of_attorney": lambda p, g: evaluate_generic_benchmark(p, g, "powers_of_attorney"),
-    "legal_claims": lambda p, g: evaluate_generic_benchmark(p, g, "legal_claims"),
-    "hr_orders": lambda p, g: evaluate_generic_benchmark(p, g, "hr_orders"),
-}
-
-AUTONOMOUS_EVALUATORS = {
-    "executive": evaluate_executive_document_autonomous,
-    "executive_documents": evaluate_executive_document_autonomous,
-    "enforcement": evaluate_enforcement_document_autonomous,
-    "enforcement_orders": evaluate_enforcement_document_autonomous,
-    "salary": evaluate_salary_document_autonomous,
-    "salary_deductions": evaluate_salary_document_autonomous,
-    "commercial_contracts": lambda d: evaluate_generic_autonomous(d, "commercial_contracts"),
-    "invoices_upd": lambda d: evaluate_generic_autonomous(d, "invoices_upd"),
-    "acceptance_certificates": lambda d: evaluate_generic_autonomous(d, "acceptance_certificates"),
-    "powers_of_attorney": lambda d: evaluate_generic_autonomous(d, "powers_of_attorney"),
-    "legal_claims": lambda d: evaluate_generic_autonomous(d, "legal_claims"),
-    "hr_orders": lambda d: evaluate_generic_autonomous(d, "hr_orders"),
-}
-
-
 def get_benchmark_evaluator(doc_type: Optional[str] = None):
-    """Возвращает оценщик бенчмарка для типа документа с безопасным fallback."""
-    if doc_type and doc_type in BENCHMARK_EVALUATORS:
-        return BENCHMARK_EVALUATORS[doc_type]
+    """
+    Оценщик бенчмарка для типа документа.
+
+    C-06: раньше здесь была таблица BENCHMARK_EVALUATORS с девятью
+    захардкоженными ID, где трём приоритетным типам доставались частные
+    скореры, игнорировавшие СВОЙ ЖЕ benchmark.json плагина. Частные скореры
+    удалены вместе с таблицами: все девять типов оцениваются по данным
+    плагина, как и обещает контракт из семи файлов (CHANGELOG C-06).
+    """
     return lambda p, g: evaluate_generic_benchmark(p, g, doc_type=doc_type)
 
 
 def get_autonomous_evaluator(doc_type: Optional[str] = None):
-    """Возвращает автономный оценщик для типа документа с безопасным fallback."""
-    if doc_type and doc_type in AUTONOMOUS_EVALUATORS:
-        return AUTONOMOUS_EVALUATORS[doc_type]
+    """Автономный оценщик для типа документа (единый движок core.guardrails)."""
     return lambda d: evaluate_generic_autonomous(d, doc_type=doc_type)
 
 
@@ -888,21 +697,30 @@ def evaluate_dataset(
         p: Dict[str, Any] = p_val if isinstance(p_val, dict) else raw_p
         f_name = p.get("file_name") or raw_p.get("file_name", "")
 
-        if f_name in gt_map:
+        # C-06: режим фиксируется по факту применения бенчмарк-скоринга, а не по
+        # непустоте gt_map. Раньше несовпадение имён тихо переключало документ на
+        # автономную оценку, а отчёт продолжал называться "benchmark".
+        if gt_map and f_name in gt_map:
             doc_res = bench_func(p, gt_map[f_name])
+            mode_used = "benchmark"
         else:
             doc_res = auto_func(p)
+            mode_used = "autonomous_no_ground_truth_match" if gt_map else "autonomous"
 
         score = doc_res["overall_score"]
         status = get_status_from_score(score)
         doc_res["status"] = status
         doc_res["file_name"] = f_name
+        doc_res["mode_used"] = mode_used
+        doc_res["measurement_caveats"] = _measurement_caveats(doc_res, mode_used, bool(gt_map))
 
         status_counts[status] += 1
         total_scores.append(score)
         evaluated_docs.append(doc_res)
 
     avg_score = round(sum(total_scores) / len(total_scores), 2) if total_scores else 0.0
+    benchmark_used = sum(1 for d in evaluated_docs if d.get("mode_used") == "benchmark")
+    gt_documents_available = len(gt_map) if gt_map else 0
 
     return {
         "doc_type": doc_type_str,
@@ -910,8 +728,45 @@ def evaluate_dataset(
         "mode": "benchmark" if gt_map else "autonomous",
         "average_quality_score_percent": avg_score,
         "status_counts": status_counts,
+        "documents_measured_in_benchmark_mode": benchmark_used,
+        "ground_truth_documents_available": gt_documents_available,
+        "ground_truth_coverage_percent": (
+            round(benchmark_used / gt_documents_available * 100.0, 1) if gt_documents_available else 0.0
+        ),
+        "measurement_caveats": {
+            "benchmark_mode_available": bool(gt_map),
+            "documents_scored_against_ground_truth": benchmark_used,
+            "documents_scored_autonomously": len(evaluated_docs) - benchmark_used,
+            "low_confidence": len(evaluated_docs) > 0 and benchmark_used == 0 and bool(gt_map),
+        },
         "documents": evaluated_docs
     }
+
+
+def _measurement_caveats(doc_res: Dict[str, Any], mode_used: str, gt_available: bool) -> Dict[str, Any]:
+    """
+    C-06: что именно стоит за числом.
+
+    Одинокий процент без контекста вводит в заблуждение: «100.00%» на одном
+    заполненном поле с одним эталонным документом не является характеристикой
+    качества модели. Явные оговорки позволяют оператору это увидеть.
+    """
+    fields_in_gt = doc_res.get("fields_in_ground_truth")
+    caveats: Dict[str, Any] = {
+        "mode_used": mode_used,
+        "evaluator": doc_res.get("evaluator", "generic"),
+        "benchmark_config_consumed": doc_res.get("benchmark_config_consumed", False),
+        "autonomous_config_consumed": doc_res.get("autonomous_config_consumed", False),
+        "fields_in_ground_truth": fields_in_gt,
+        "fields_absent_on_both_sides": len(doc_res.get("fields_absent_on_both_sides", []) or []),
+        "fields_hallucinated": doc_res.get("fields_hallucinated", []),
+        "fields_missed": doc_res.get("fields_missed", []),
+        "evaluator_degraded": bool(doc_res.get("evaluator_degraded")),
+    }
+    caveats["ground_truth_match"] = gt_available and mode_used == "benchmark"
+    # Малый знаменатель: цифра держится на одном-двух полях
+    caveats["low_field_support"] = isinstance(fields_in_gt, int) and 0 < fields_in_gt <= 2
+    return caveats
 
 
 def generate_run_summary(all_category_metrics: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:

@@ -14,7 +14,6 @@ import os
 import json
 import time
 import re
-import difflib
 from typing import Dict, Any, List, Optional, Tuple, Union
 from dotenv import load_dotenv
 
@@ -59,7 +58,8 @@ from .core.metrics_evaluator import (
     append_to_metrics_history,
     export_run_summary_markdown,
     export_run_summary_excel,
-    validate_ip_number_format
+    _get_nested,
+    score_field,
 )
 from .core.json_exporter import (
     save_single_document_json,
@@ -72,10 +72,9 @@ from .type_registry import get_registry, UNKNOWN_CATEGORY
 from .file_processor import FileProcessor, scan_directory_for_documents, SUPPORTED_IMAGE_EXTS
 from .core.document_loader import load_document, SUPPORTED_TEXT_EXTS, SUPPORTED_WORD_EXTS
 from .verifier.auditor import ZeroTrustAuditor
-from .verifier.chronology import parse_flexible_date
-from .verifier.checksums import validate_inn
 from .verifier.status import VerificationIssue, VerificationReport, VerificationStatus
 from .core.io_utils import mask_secret
+from .core.guardrails import run_guardrails
 
 
 def _extraction_failed(base_name: str, reason: str) -> Dict[str, Any]:
@@ -634,6 +633,9 @@ class LegalDocPlatformFacade:
     def validate_document(self, data: Dict[str, Any], doc_type: str) -> Dict[str, Any]:
         """
         Проверяет извлеченные данные по правилам autonomous.json плагина.
+
+        C-06: исполнение делегировано core.guardrails.run_guardrails, чтобы
+        метрики и валидация давали одинаковый вердикт на одном поле.
         """
         plugin = self.registry.get(doc_type)
         if not plugin or doc_type == UNKNOWN_CATEGORY:
@@ -643,102 +645,20 @@ class LegalDocPlatformFacade:
                 "issues": [{"field": "doc_type", "severity": "WARNING", "message": "Тип документа требует ручной верификации"}]
             }
 
-        rules = plugin.autonomous_config.get("fields", [])
-        issues = []
+        def _on_unknown(plugin_id: str, field: str, rule: str, note: str) -> None:
+            logger.warning(
+                f"Плагин '{plugin_id}': правило '{rule}' для поля '{field}' не реализовано в DSL"
+            )
 
-        def _get_nested(d: Dict[str, Any], path: str) -> Any:
-            parts = path.split(".")
-            curr: Any = d
-            for p in parts:
-                if isinstance(curr, dict):
-                    curr = curr.get(p)
-                else:
-                    return None
-            return curr
-
-        passed_count = 0
-        total_rules = len(rules)
-        known_rules = {"not_empty", "valid_date_format", "positive_number_or_percentage",
-                       "positive_number", "valid_inn", "ip_number_format", "ip_number_format_optional"}
-
-        for r in rules:
-            if not isinstance(r, dict):
-                continue
-            field_path = r.get("field", "")
-            rule_type = r.get("rule", "")
-            severity = r.get("severity", "MEDIUM")
-            msg = r.get("message", f"Ошибка проверки {field_path}")
-
-            val = _get_nested(data, field_path)
-            is_valid = True
-
-            if rule_type == "not_empty":
-                is_valid = bool(val and str(val).strip())
-            elif rule_type == "valid_date_format":
-                # M-02: реальная проверка распознаваемой даты, а не длины строки
-                is_valid = bool(val) and parse_flexible_date(str(val)) is not None
-            elif rule_type == "positive_number_or_percentage":
-                # M-03: проверка знака и числового/процентного формата
-                if val is None:
-                    is_valid = False
-                else:
-                    s = str(val).strip().replace(" ", "").replace(",", ".")
-                    if s.endswith("%"):
-                        s = s[:-1]
-                    try:
-                        is_valid = float(s) > 0
-                    except (ValueError, TypeError):
-                        is_valid = False
-            elif rule_type == "positive_number":
-                try:
-                    is_valid = bool(val is not None and float(val) > 0)
-                except (ValueError, TypeError):
-                    is_valid = False
-            elif rule_type == "valid_inn":
-                if val:
-                    ok_inn, _msg_inn = validate_inn(str(val))
-                    is_valid = ok_inn
-                else:
-                    is_valid = False
-            elif rule_type == "ip_number_format":
-                # Формат номера ИП: NNNNN/NN/NNNN(N)-ИП (слэши обязательны, номер обязателен)
-                if not val:
-                    is_valid = False
-                else:
-                    ok_fmt, fmt_score = validate_ip_number_format(str(val))
-                    is_valid = bool(ok_fmt and fmt_score >= 90.0)
-            elif rule_type == "ip_number_format_optional":
-                # То же, но пустое значение допустимо (номер ИП присваивается не всегда)
-                if not val:
-                    is_valid = True
-                else:
-                    ok_fmt, fmt_score = validate_ip_number_format(str(val))
-                    is_valid = bool(ok_fmt and fmt_score >= 90.0)
-            elif rule_type and rule_type not in known_rules:
-                # H-09: неизвестный тип правила не может молча считаться пройденным
-                is_valid = False
-                issues.append({
-                    "field": field_path,
-                    "severity": "WARNING",
-                    "message": f"Неизвестный тип правила '{rule_type}' в autonomous.json (не реализован в DSL)"
-                })
-                logger.warning(
-                    f"Плагин '{plugin.id}': правило '{rule_type}' для поля '{field_path}' "
-                    f"не реализовано в validate_document и помечено как непройденное"
-                )
-                continue
-
-            if is_valid:
-                passed_count += 1
-            else:
-                issues.append({"field": field_path, "severity": severity, "message": msg})
-
-        score = round((passed_count / total_rules * 100.0), 1) if total_rules > 0 else 100.0
-        return {
-            "passed": len(issues) == 0,
-            "score": score,
-            "issues": issues
-        }
+        result = run_guardrails(
+            plugin.autonomous_config.get("fields", []), data, plugin_id=plugin.id, on_unknown_rule=_on_unknown
+        )
+        result["issues"] = result["issues"] + [
+            {"field": u["field"], "severity": "WARNING", "message": u["message"]}
+            for u in result["rules_unknown"]
+        ]
+        result["passed"] = not result["issues"]
+        return result
 
     # =========================================================================
     # 4. БЕНЧМАРК ПРОТИВ GROUND TRUTH
@@ -751,69 +671,74 @@ class LegalDocPlatformFacade:
     ) -> Dict[str, Any]:
         """
         Сравнивает извлеченные данные с эталонными (ground truth) по весам benchmark.json.
+
+        C-06: используется тот же core.metrics_evaluator.score_field, что и в
+        evaluate_generic_benchmark. Раньше здесь жила вторая копия диспетчеризации
+        с тем же дефектом: объявленный в benchmark.json тип "number" не понимался
+        и суммы сравнивались строками, а поле, отсутствующее с обеих сторон,
+        давало 100%.
         """
         plugin = self.registry.get(doc_type)
         if not plugin:
             return {"accuracy": 0.0, "details": {}}
 
         bench_fields = plugin.benchmark_config.get("fields", [])
-        total_weight = 0.0
-        earned_weight = 0.0
-        details = {}
-
-        def _get_nested(d: Dict[str, Any], path: str) -> Any:
-            parts = path.split(".")
-            curr: Any = d
-            for p in parts:
-                if isinstance(curr, dict):
-                    curr = curr.get(p)
-                else:
-                    return None
-            return curr
+        earned = 0.0
+        gt_weight = 0.0
+        penalty = 0.0
+        details: Dict[str, Any] = {}
+        absent_on_both: List[str] = []
+        hallucinated: List[str] = []
+        missed: List[str] = []
 
         for f in bench_fields:
             path = f.get("path", "")
+            if not path:
+                continue
             weight = float(f.get("weight", 1.0))
-            m_type = f.get("type", "fuzzy")
+            label = f.get("label", path)
 
-            val_ext = _get_nested(extracted, path)
-            val_gt = _get_nested(ground_truth, path)
+            score, kind, state = score_field(
+                _get_nested(extracted, path), _get_nested(ground_truth, path), f.get("type")
+            )
+            if state == "absent_both":
+                absent_on_both.append(label)
+                continue
+            if state == "hallucination":
+                hallucinated.append(label)
+                penalty += weight
+                details[path] = {
+                    "label": label, "kind": kind, "extracted": _get_nested(extracted, path),
+                    "ground_truth": None, "state": "hallucination", "similarity": 0.0, "weight": weight,
+                }
+                continue
+            if state == "missed":
+                missed.append(label)
 
-            total_weight += weight
-            sim = 0.0
-
-            if val_ext is None and val_gt is None:
-                sim = 1.0
-            elif val_ext is None or val_gt is None:
-                sim = 0.0
-            elif m_type == "exact":
-                sim = 1.0 if str(val_ext).strip().lower() == str(val_gt).strip().lower() else 0.0
-            elif m_type == "numeric":
-                try:
-                    num_e = float(str(val_ext).replace(" ", "").replace(",", "."))
-                    num_g = float(str(val_gt).replace(" ", "").replace(",", "."))
-                    sim = 1.0 if abs(num_e - num_g) < 0.01 else max(0.0, 1.0 - abs(num_e - num_g) / max(num_g, 1.0))
-                except Exception:
-                    sim = 0.0
-            else:  # fuzzy
-                str_e = str(val_ext).strip().lower()
-                str_g = str(val_gt).strip().lower()
-                sim = difflib.SequenceMatcher(None, str_e, str_g).ratio()
-
-            earned_weight += sim * weight
+            gt_weight += weight
+            earned += (score or 0.0) * weight / 100.0
             details[path] = {
-                "extracted": val_ext,
-                "ground_truth": val_gt,
-                "similarity": round(sim, 3),
-                "weight": weight
+                "label": label,
+                "kind": kind,
+                "state": state,
+                "extracted": _get_nested(extracted, path),
+                "ground_truth": _get_nested(ground_truth, path),
+                "similarity": round((score or 0.0) / 100.0, 3),
+                "weight": weight,
             }
 
-        accuracy = round((earned_weight / total_weight * 100.0), 2) if total_weight > 0 else 0.0
+        accuracy = max(0.0, min(100.0, (earned - penalty) / gt_weight * 100.0)) if gt_weight > 0 else 0.0
         return {
-            "accuracy": accuracy,
-            "total_weight": total_weight,
-            "earned_weight": earned_weight,
-            "details": details
+            "accuracy": round(accuracy, 2),
+            "total_weight": gt_weight,
+            "earned_weight": earned,
+            "evaluator": "generic",
+            "benchmark_config_consumed": bool(bench_fields),
+            "fields_absent_on_both_sides": absent_on_both,
+            "fields_hallucinated": hallucinated,
+            "fields_missed": missed,
+            "hallucination_penalty": round(penalty, 2),
+            "details": details,
         }
 
     # =========================================================================
@@ -929,7 +854,11 @@ class LegalDocPlatformFacade:
                     gt_data = None
 
         if extraction_failed:
-            doc_eval: Dict[str, Any] = {"overall_score": 0.0, "status": "failed", "field_scores": {}}
+            doc_eval: Dict[str, Any] = {
+                "overall_score": 0.0, "status": "failed", "field_scores": {},
+                "measurement_caveats": {"mode_used": "not_measured", "evaluator_degraded": True,
+                                        "reason": "extraction_failed"},
+            }
             quality_score = 0.0
             quality_status = "failed"
         else:
@@ -1011,6 +940,7 @@ class LegalDocPlatformFacade:
             "quality_score_percent": quality_score,
             "quality_status": quality_status,
             "metrics": doc_eval,
+            "measurement_caveats": doc_eval.get("measurement_caveats", {}) if doc_eval else {},
             "status": doc_status,
             "errors": [failure_reason] if extraction_failed else [],
             "processed_at": time.strftime("%Y-%m-%d %H:%M:%S")

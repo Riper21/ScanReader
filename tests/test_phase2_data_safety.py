@@ -140,31 +140,6 @@ def test_c07_merge_is_idempotent_on_missing_registry(tmp_path):
 # =========================================================================
 # C-09: Ground Truth не сравнивается сам с собой
 # =========================================================================
-def test_c09_benchmark_against_ground_truth_detects_self_comparison():
-    """Эталон, сравнённый с собой, обязан быть распознан как такая подмена."""
-    from scan_reader.facade import LegalDocPlatformFacade
-    from scan_reader.type_registry import get_registry
-
-    facade = LegalDocPlatformFacade.__new__(LegalDocPlatformFacade)
-    facade.registry = get_registry()
-    gt = {
-        "file_name": "sample.pdf",
-        "doc_type": "salary_deductions",
-        "debtor": {"inn": "7707083893"},
-        "finances": {"debt_amount_rub": 1000.0},
-    }
-
-    real = facade.benchmark_against_ground_truth(
-        {"debtor": {"inn": "7707083893"}, "finances": {"debt_amount_rub": 1000.0}}, gt,
-        "salary_deductions",
-    )
-    selfcmp = facade.benchmark_against_ground_truth(gt, gt, "salary_deductions")
-
-    # Сравнение с эталоном даёт полное совпадение, но это не измерение точности
-    assert selfcmp.get("accuracy", 0.0) == 100.0
-    assert real.get("accuracy", 0.0) == 100.0
-
-
 # =========================================================================
 # C-09: незавершённый бенчмарк не отчитывается как 100% точности
 # =========================================================================
@@ -256,10 +231,15 @@ def test_c09_schema_integrity_is_reported_separately(tmp_path, monkeypatch):
 def test_c09_self_comparison_yields_full_score_and_must_not_be_counted():
     """Эталон, сравнённый с собой, даёт 100% — и это НЕ измерение точности.
 
-    Проверка самого признака подмены вынесена в launcher (шаг C-09): запись с
-    is_extracted_comparison=False не должна попадать в общий показатель точности.
-    Точность извлечения против реально отличающихся данных проверяется в
-    test_phase5_measurement.py - там же зафиксирован дефект C-06.
+    Поля, пустые с обеих сторон, из знаменателя исключены, а поля, присутствующие
+    в эталоне, при совпадении дают 100. Поэтому «точность» здесь тривиальна.
+
+    Проверка того, что подмена не попадает в общий показатель, вынесена в
+    launcher (шаг C-09). Точность извлечения против реально отличающихся данных
+    проверяется в test_phase5_measurement.py.
+
+    Поля взяты из doc_types/salary_deductions/benchmark.json, иначе знаменатель
+    оказывается пустым и оценка не состоялась бы.
     """
     from scan_reader.facade import LegalDocPlatformFacade
     from scan_reader.type_registry import get_registry
@@ -268,16 +248,18 @@ def test_c09_self_comparison_yields_full_score_and_must_not_be_counted():
     facade.registry = get_registry()
     gt = {
         "file_name": "sample.pdf",
-        "doc_type": "salary_deductions",
-        "debtor": {"inn": "7707083893"},
-        "finances": {"debt_amount_rub": 1000.0},
+        "doc_date": "15.01.2023",
+        "doc_number": "П-123",
+        "ip_number": "98765/23/50026-ИП",
+        "claimant_name": "ПАО Сбербанк",
+        "debtor_name": "Смирнов Андрей",
+        "finances": {"total_deduction_rub": 150000.0, "deduction_percentage": "50%"},
     }
 
     selfcmp = facade.benchmark_against_ground_truth(gt, gt, "salary_deductions")
     assert selfcmp.get("accuracy", 0.0) == 100.0
-    # Совпадение с эталоном неинформативно: эталон сравнивается сам с собой.
-    # Признак подмены формирует вызывающая сторона (launcher), а не этот метод.
-    assert "accuracy" in selfcmp
+    assert selfcmp["total_weight"] > 0
+    assert "evaluator" in selfcmp
 
 
 # =========================================================================
