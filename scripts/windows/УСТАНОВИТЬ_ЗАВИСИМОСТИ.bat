@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 chcp 65001 >nul
 setlocal
 title Install Dependencies - Legal Document Platform (ScanReader)

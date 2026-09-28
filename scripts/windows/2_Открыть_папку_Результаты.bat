@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 setlocal
 title Open Results Folder - ScanReader 0.8.0
 cd /d "%~dp0..\.."

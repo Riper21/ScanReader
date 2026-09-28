@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Tests for Stage 3/4 hardening:
 - B-01: package resources completeness (importlib.resources — работает и в installed-режиме).

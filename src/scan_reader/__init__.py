@@ -4,7 +4,7 @@ ScanReader: AI legal document recognition, Zero-Trust verification, and 1C/Excel
 
 from __future__ import annotations
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 from .facade import LegalDocPlatformFacade
 from .file_processor import FileProcessor

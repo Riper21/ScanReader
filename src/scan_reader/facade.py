@@ -84,7 +84,7 @@ def _get_version() -> str:
         from . import __version__
         return __version__
     except Exception:
-        return "0.8.0"
+        return "0.9.0"
 
 
 class UniversalDocumentDoc(BaseModel):

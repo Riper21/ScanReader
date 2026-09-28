@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 setlocal
 title Ground Truth Benchmark - ScanReader 0.8.0
 cd /d "%~dp0..\.."

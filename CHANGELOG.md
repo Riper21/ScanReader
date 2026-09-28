@@ -6,15 +6,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — Recognition guards (S-10…S-13): закрытие слепых зон распознавания
+## [0.9.0] - 2026-09-28
 
-### Added
+Первая формальная релизная версия. Включает полное устранение находок аудита от 26.09.2026,
+remediation качества сканов (S-1…S-8) и охранные механизмы распознавания (S-10…S-13).
+
+### Added — Recognition guards (S-10…S-13)
 - **S-13 OCR cross-check for scans:** images without a text layer now get a second VLM pass
   ("exact transcription") used as the reference in the cross-modal gate — garbled names, УИН,
   ИП/ИЛ numbers no longer pass silently. Controlled by `SCANREADER_OCR_CROSSCHECK` (default on).
   Each unconfirmed requisite applies a −5 pp quality penalty (capped at 15).
-
-### Fixed
 - **S-10:** Fractional withholding rates (`1/4`, `1/3`, `1/2`, `2/3` of income) now participate in
   the 229-FZ statutory limits check — alimony-deduction documents were previously exempt from control.
   IP numbers (`10701/16/3001-ИП`) are explicitly excluded from fraction parsing.
@@ -24,12 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ОКТМО length (8/11), КПП length (9), бланк ИЛ number length (8–9 digits),
   case numbers without separators score 60 instead of 100 (glue suspicion).
 
-## [Unreleased] — Scan quality remediation (S-1…S-8, кейс 745×1024 @ 96 DPI)
+### Fixed — Scan quality (S-1…S-8, кейс 745×1024 @ 96 DPI)
 
 Root cause analysis of a real 96 DPI scan with garbled requisites (lost `/` in IP numbers,
 misread digits, false INVALID_BANK_ACCOUNT on a Bank of Russia account, Excel showing 100%).
 
-### Fixed
 - **S-1:** Low-resolution scans (< 1500 px) are upscaled 2× (LANCZOS) before VLM inference —
   requisites digits become readable instead of guessed.
 - **S-2:** Status coherence: a Zero-Trust error now forces `validation.passed = False`
@@ -47,7 +47,7 @@ misread digits, false INVALID_BANK_ACCOUNT on a Bank of Russia account, Excel sh
   salary_deductions and enforcement_orders autonomous configs now check IP-number format
   and the mandatory base-document number.
 
-## [Unreleased] — Audit remediation (Итоги аудита 26.09.2026)
+### Fixed — Audit remediation (26.09.2026)
 
 ### Fixed — Blockers
 - **B-01:** Plugin files (JSON/MD, 7 files per plugin) now shipped in wheel/sdist via
