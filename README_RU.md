@@ -104,22 +104,22 @@ scan-reader run "C:\Scans\order.pdf" --format full
 # 3. Обработка с возвратом путей к обоим файлам (Full и Flat)
 scan-reader run "C:\Scans\order.pdf" --format both
 
-# 2. Полная обработка со структурированным выводом JSON и Zero-Trust отчетом
+# 4. Полная обработка со структурированным выводом JSON и Zero-Trust отчетом
 scan-reader run "C:\Scans\order.pdf" --json
 
-# 3. Быстрая Fast-Path классификация документа по шапке
+# 5. Быстрая Fast-Path классификация документа по шапке
 scan-reader classify "C:\Scans\order.pdf" --json
 
-# 4. Независимый Zero-Trust аудит ранее извлеченного JSON-файла
+# 6. Независимый Zero-Trust аудит ранее извлеченного JSON-файла
 scan-reader verify "output\order_salary_deductions_Full.json" --json
 
-# 5. Сборка сводных реестров 1С и многостраничного Excel
+# 7. Сборка сводных реестров 1С и многостраничного Excel
 scan-reader export "output" --format both
 
-# 6. Самодиагностика платформы (VLM-модель, TTFT, токены, GPU, окружение)
+# 8. Самодиагностика платформы (VLM-модель, TTFT, токены, GPU, окружение)
 scan-reader doctor
 
-# 7. Запуск приватного JSON-RPC сервера (5 инструментов) по Stdio
+# 9. Запуск приватного JSON-RPC сервера (5 инструментов) по Stdio
 scan-reader mcp
 ```
 

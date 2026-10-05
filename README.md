@@ -107,16 +107,16 @@ scan-reader run "C:\Scans\order.pdf" --json
 # 5. Fast-Path classification of header
 scan-reader classify "C:\Scans\order.pdf" --json
 
-# 4. Zero-Trust audit of an existing extracted JSON
+# 6. Zero-Trust audit of an existing extracted JSON
 scan-reader verify "output\order_salary_deductions_Full.json" --json
 
-# 5. Consolidate processed documents into 1C and Excel registries
+# 7. Consolidate processed documents into 1C and Excel registries
 scan-reader export "output" --format both
 
-# 6. Run diagnostic self-check (VLM, TTFT, GPU, dependencies)
+# 8. Run diagnostic self-check (VLM, TTFT, GPU, dependencies)
 scan-reader doctor
 
-# 7. Start private JSON-RPC stdio server (5 tools)
+# 9. Start private JSON-RPC stdio server (5 tools)
 scan-reader mcp
 ```
 
@@ -150,20 +150,20 @@ report = ZeroTrustAuditor.audit_document(
     raw_ocr_text=result.get("raw_text")
 )
 
-    if report.status == VerificationStatus.ZERO_TRUST_VERIFIED:
-        # «100 % verified» would be a false claim: this means every applicable
-        # deterministic check passed, which is a statement about the checks,
-        # not about the document being correct.
-        print("All applicable Zero-Trust checks passed")
-        print("  checksums verified:", report.details.get("checksums_verified_ok"))
-        print("  reconciliation run  :", report.details.get("math_verified_ok"))
-        print("  gate source        :", report.details.get("gate_source"))
-    elif report.status == VerificationStatus.PARTIALLY_VERIFIED:
-        print("Only part of the checks could be applied - selective review needed")
-    elif report.status == VerificationStatus.GATE_NOT_EXECUTED:
-        print("Cross-modal gate did not run: requisites are unconfirmed")
-    elif report.status == VerificationStatus.DISCREPANCY_DETECTED:
-        print("Discrepancy detected:", [issue.message for issue in report.issues])
+if report.status == VerificationStatus.ZERO_TRUST_VERIFIED:
+    # «100 % verified» would be a false claim: this means every applicable
+    # deterministic check passed, which is a statement about the checks,
+    # not about the document being correct.
+    print("All applicable Zero-Trust checks passed")
+    print("  checksums verified:", report.details.get("checksums_verified_ok"))
+    print("  reconciliation run  :", report.details.get("math_verified_ok"))
+    print("  gate source        :", report.details.get("gate_source"))
+elif report.status == VerificationStatus.PARTIALLY_VERIFIED:
+    print("Only part of the checks could be applied - selective review needed")
+elif report.status == VerificationStatus.GATE_NOT_EXECUTED:
+    print("Cross-modal gate did not run: requisites are unconfirmed")
+elif report.status == VerificationStatus.DISCREPANCY_DETECTED:
+    print("Discrepancy detected:", [issue.message for issue in report.issues])
 ```
 
 ---
