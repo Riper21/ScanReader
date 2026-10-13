@@ -574,6 +574,93 @@ def get_status_from_score(score: float) -> str:
 # 5. ГЛАВНЫЙ МЕНЕДЖЕР ОЦЕНКИ КАТЕГОРИИ
 # ==============================================================================
 
+# P0.7: имена, никогда не являющиеся результатом одного документа.
+_RESULT_SKIP_PREFIXES = ("run_metrics", "benchmark_", "Registry_", "all_documents")
+_RESULT_SKIP_SUFFIXES = (
+    "_Flat.json", "_quality_metrics.json", "_registry.json", "_registry_1c.json",
+)
+_RESULT_SKIP_EXACT = {"metrics_history.json"}
+
+
+def collect_result_documents(
+    results_dir: Any,
+    registry: Optional[Any] = None,
+) -> List[Dict[str, Any]]:
+    """
+    P0.7: единая каноническая выборка документов из каталога результатов.
+
+    Раньше каждый потребитель (evaluate_dataset в dir-режиме, cli handle_benchmark,
+    handle_export, launcher, MCP export_results) собирал *.json по-своему: где-то
+    фильтровался только run_metrics*, из-за чего Registry_Full.json вносил каждый
+    документ второй раз (двойной счёт бенчмарка), а легаси-копии ({stem}_raw.json,
+    {stem}_{doc_type}.json) считались отдельными документами.
+
+    Правила:
+    - Источник записи — {stem}_Full.json (канонический артефакт 0.9.3+).
+    - Легаси-артефакты {stem}_raw.json / {stem}_{doc_type}.json учитываются,
+      только если Full-файла с тем же stem нет (doc_type-суффикс срезается,
+      если передан registry).
+    - Сводные реестры (Registry_*, all_documents*), метрики (run_metrics*,
+      benchmark_*, *_quality_metrics.json, metrics_history.json) и копии
+      1C/Flat (_registry*.json) исключаются всегда.
+    - Записи дедуплицируются по (file_path/file_name, doc_type).
+    """
+    from pathlib import Path
+    import glob as _glob
+
+    results_dir = Path(str(results_dir))
+    if not results_dir.is_dir():
+        return []
+
+    legacy_suffixes = ["_raw"]
+    if registry is not None and hasattr(registry, "ids"):
+        legacy_suffixes.extend(f"_{pid}" for pid in registry.ids())
+
+    full_files: Dict[str, str] = {}
+    legacy_files: Dict[str, List[str]] = {}
+    for jf in sorted(_glob.glob(str(results_dir / "*.json"))):
+        base = os.path.basename(jf)
+        if base in _RESULT_SKIP_EXACT:
+            continue
+        if base.startswith(_RESULT_SKIP_PREFIXES) or base.endswith(_RESULT_SKIP_SUFFIXES):
+            continue
+        if base.endswith("_Full.json"):
+            full_files[base[: -len("_Full.json")]] = jf
+            continue
+        stem = base[: -len(".json")]
+        for suffix in legacy_suffixes:
+            if stem.endswith(suffix):
+                stem = stem[: -len(suffix)]
+                break
+        legacy_files.setdefault(stem, []).append(jf)
+
+    chosen = list(full_files.values())
+    for stem, paths in legacy_files.items():
+        if stem not in full_files:
+            chosen.extend(paths)
+
+    records: List[Dict[str, Any]] = []
+    seen: set = set()
+    for jf in chosen:
+        try:
+            with open(jf, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            logger.debug(f"Пропущен некорректный JSON файл '{jf}': {e}")
+            continue
+        items = data if isinstance(data, list) else [data]
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            fp = it.get("file_path") or it.get("file_name") or os.path.basename(jf)
+            key = (str(fp), it.get("doc_type", "unknown"))
+            if key in seen:
+                continue
+            seen.add(key)
+            records.append(it)
+    return records
+
+
 def evaluate_dataset(
     predicted_docs: Any,
     ground_truth_docs: Optional[Any] = None,
@@ -588,7 +675,6 @@ def evaluate_dataset(
     - Для всех 9 типов документов использует целевые правила плагинов, исключая ложный fallback на executive_documents (C-06).
     """
     from pathlib import Path
-    import glob
 
     # Разрешение параметров при вызове из MCP: evaluate_dataset(results_dir, gt_dir, registry)
     if registry is None and doc_type is not None and not isinstance(doc_type, str):
@@ -600,25 +686,18 @@ def evaluate_dataset(
         results_dir = Path(predicted_docs)
         gt_dir = Path(ground_truth_docs) if ground_truth_docs and os.path.isdir(str(ground_truth_docs)) else None
 
-        results_map: Dict[str, List[Dict[str, Any]]] = {}
-        for jf in glob.glob(str(results_dir / "*.json")):
-            base = os.path.basename(jf)
-            if base.startswith("run_metrics") or base.startswith("benchmark_") or base.endswith("_quality_metrics.json"):
-                continue
-            try:
-                with open(jf, "r", encoding="utf-8") as f:
-                    d = json.load(f)
-                    items = d if isinstance(d, list) else [d]
-                    for it in items:
-                        if isinstance(it, dict):
-                            dt = it.get("doc_type", "unknown")
-                            results_map.setdefault(dt, []).append(it)
-            except Exception as e:
-                logger.debug(f"Пропущен некорректный JSON файл '{jf}': {e}")
-
         if registry is None:
             from ..type_registry import get_registry
             registry = get_registry()
+
+        # P0.7: единая выборка документов (только {stem}_Full.json + легаси без
+        # Full-двойника). Раньше glob брал ВСЕ *.json: Registry_Full.json вносил
+        # каждый документ второй раз, легаси-копии считались отдельными
+        # документами — бенчмарк и сводки задваивались.
+        results_map: Dict[str, List[Dict[str, Any]]] = {}
+        for it in collect_result_documents(results_dir, registry):
+            dt = it.get("doc_type", "unknown")
+            results_map.setdefault(dt, []).append(it)
 
         category_metrics: Dict[str, Dict[str, Any]] = {}
         all_doc_types = set(results_map.keys())

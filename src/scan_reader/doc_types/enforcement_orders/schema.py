@@ -48,7 +48,7 @@ class PartyInfo(ValidatedPartyMixin):
 class FinancesInfo(BaseModel):
     main_debt_rub: Optional[float] = Field(ge=0, default=None, description="Основной долг в рублях")
     court_costs_rub: Optional[float] = Field(ge=0, default=None, description="Судебные расходы / пошлина в рублях")
-    periodic_rub: str = Field(ge=0, default="", description="Периодические платежи")
+    periodic_rub: str = Field(default="", description="Периодические платежи (текстовая формулировка, напр. «1/4 части заработка»)")
     fee_penalty: str = Field(default="", description="Исполнительский сбор / штраф")
     total_rub: Optional[float] = Field(ge=0, default=None, description="Итоговая сумма к взысканию в рублях")
     non_monetary_summary: str = Field(default="", description="Предмет неимущественного требования")

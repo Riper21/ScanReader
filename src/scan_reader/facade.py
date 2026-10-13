@@ -625,44 +625,63 @@ class LegalDocPlatformFacade:
             logger.error("LLM клиент недоступен. Возврат пустой структуры.")
             return _extraction_failed(base_name, "LLM client unavailable")
 
-        start_time = time.perf_counter()
+        # P0.6: ретрай при невалидном JSON. Раньше единственный ответ с обрывками
+        # рассуждений вместо JSON сразу признавался финальным, навсегда
+        # кэшировался и блокировал повторные попытки для того же документа.
         try:
-            with self.rate_limiter:
-                response = client.chat.completions.create(
-                    model=self.model_name,
-                    messages=messages,
-                    temperature=0.0
-                )
-        except Exception as e:
-            # Раньше сетевой сбой/таймаут VLM пробрасывался наружу и убивал весь
-            # process_single_document; в батче его спасал внешний обработчик,
-            # в одиночном режиме (CLI/MCP) команда падала без диагностики.
-            logger.error(f"Сбой вызова VLM при экстракции '{base_name}': {mask_secret(str(e))}")
-            return _extraction_failed(base_name, f"VLM call failed: {e}")
+            max_attempts = max(1, int(os.getenv("SCANREADER_VLM_ATTEMPTS", "2") or 2))
+        except ValueError:
+            max_attempts = 2
 
-        latency_sec = time.perf_counter() - start_time
-        reply_text = response.choices[0].message.content or ""
-        usage = response.usage
+        reply_text = ""
+        reply_json_ok = False
+        parsed_data: Optional[Dict[str, Any]] = None
+        for attempt in range(1, max_attempts + 1):
+            start_time = time.perf_counter()
+            try:
+                with self.rate_limiter:
+                    response = client.chat.completions.create(
+                        model=self.model_name,
+                        messages=messages,
+                        temperature=0.0
+                    )
+            except Exception as e:
+                # Раньше сетевой сбой/таймаут VLM пробрасывался наружу и убивал весь
+                # process_single_document; в батче его спасал внешний обработчик,
+                # в одиночном режиме (CLI/MCP) команда падала без диагностики.
+                logger.error(f"Сбой вызова VLM при экстракции '{base_name}': {mask_secret(str(e))}")
+                return _extraction_failed(base_name, f"VLM call failed: {e}")
 
-        prompt_tokens = usage.prompt_tokens if usage else 0
-        comp_tokens = usage.completion_tokens if usage else 0
-        total_tokens = usage.total_tokens if usage else (prompt_tokens + comp_tokens)
+            latency_sec = time.perf_counter() - start_time
+            reply_text = response.choices[0].message.content or ""
+            usage = response.usage
 
-        # Регистрация токенов
-        self.tracker.record_call(
-            model=self.model_name,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=comp_tokens,
-            total_tokens=total_tokens,
-            latency_sec=latency_sec,
-            is_cache_hit=False,
-            stage_name=f"extract_{doc_type}",
-            doc_name=base_name
-        )
+            prompt_tokens = usage.prompt_tokens if usage else 0
+            comp_tokens = usage.completion_tokens if usage else 0
+            total_tokens = usage.total_tokens if usage else (prompt_tokens + comp_tokens)
 
-        parsed_data = _safe_parse_json(reply_text)
+            # Регистрация токенов (каждая попытка — отдельный вызов модели)
+            self.tracker.record_call(
+                model=self.model_name,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=comp_tokens,
+                total_tokens=total_tokens,
+                latency_sec=latency_sec,
+                is_cache_hit=False,
+                stage_name=f"extract_{doc_type}",
+                doc_name=base_name
+            )
+
+            parsed_data = _safe_parse_json(reply_text)
+            if parsed_data:
+                reply_json_ok = True
+                break
+            logger.warning(
+                f"Попытка {attempt}/{max_attempts}: ответ модели для '{base_name}' не содержит JSON; "
+                + ("повторяем запрос." if attempt < max_attempts else "попытки исчерпаны.")
+            )
+
         if not parsed_data:
-            logger.warning(f"Не удалось извлечь JSON из ответа модели для '{base_name}'. Сохраняем сырой текст.")
             parsed_data = {"raw_reply": reply_text}
 
         parsed_data["file_name"] = base_name
@@ -715,7 +734,8 @@ class LegalDocPlatformFacade:
                     recovered_by_regex.append("finances.court_costs_rub")
 
         # Фаза 8.1: нераспарсенный ответ модели — тоже эвристический случай
-        if not _safe_parse_json(reply_text):
+        # (P0.6: без повторного парсинга — флаг известен из цикла попыток).
+        if not reply_json_ok:
             recovered_by_regex.append("_raw_reply_unparsed")
 
         # Валидация по схеме Pydantic (с пре-валидаторами очистки сумм и нормализации строк)
@@ -732,11 +752,27 @@ class LegalDocPlatformFacade:
             validated_dict["schema_validated"] = False
             validated_dict["_schema_validation_error"] = str(e)
 
+        # P0.6: сырой ответ модели обязан доживать до результата: схема с
+        # extra='ignore' выбрасывала raw_reply при model_dump(), и оператор
+        # не видел, что именно ответила модель (тихая потеря диагностики).
+        if "raw_reply" in parsed_data and "raw_reply" not in validated_dict:
+            validated_dict["raw_reply"] = parsed_data["raw_reply"]
+
         if recovered_by_regex:
             validated_dict["_recovered_by_regex"] = sorted(set(recovered_by_regex))
 
-        # Сохранение в кэш
-        self.cache.set(cache_key, json.dumps(validated_dict, ensure_ascii=False))
+        # P0.6: провальные и эвристические ответы не кэшируются. Раньше ответ
+        # без JSON (raw_reply) или с суммами, восстановленными регексом,
+        # попадал в кэш навсегда: повторные запуски того же документа
+        # возвращали мусор из кэша вместо новой попытки модели.
+        if reply_json_ok and not recovered_by_regex:
+            self.cache.set(cache_key, json.dumps(validated_dict, ensure_ascii=False))
+        else:
+            logger.debug(
+                f"Ответ для '{base_name}' не закэширован: "
+                f"{'JSON не распарсен' if not reply_json_ok else 'эвристика regex'} — "
+                "следующий запуск обратится к модели повторно."
+            )
         return validated_dict
 
     # =========================================================================

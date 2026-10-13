@@ -259,50 +259,21 @@ def run_benchmark_suite(facade: LegalDocPlatformFacade):
 
 def rebuild_registries_and_excel(facade: LegalDocPlatformFacade, exporter=None) -> None:
     """Пересборка сводных JSON-реестров и Excel из сохраненных результатов (меню [7])."""
-    import glob
-    import json
     try:
         from .core.json_exporter import export_consolidated_registries
     except (ImportError, ValueError):
         from scan_reader.core.json_exporter import export_consolidated_registries
+    try:
+        from .core.metrics_evaluator import collect_result_documents
+    except (ImportError, ValueError):
+        from scan_reader.core.metrics_evaluator import collect_result_documents
 
     if exporter is None:
         exporter = LegalExcelExporter(output_dir=facade.results_dir)
 
-    json_files = glob.glob(os.path.join(facade.results_dir, "*.json"))
-    loaded = []
-    seen_stems = set()
-    for jf in json_files:
-        base = os.path.basename(jf)
-        # Пропускаем сводные файлы реестров и отчетов метрик
-        if (
-            base.startswith("run_metrics")
-            or base.startswith("benchmark_")
-            or base.startswith("Registry_")
-            or base.endswith("_registry.json")
-            or base.endswith("_registry_1c.json")
-            or base.endswith("_Flat.json")
-            or base.endswith("_quality_metrics.json")
-            or base == "metrics_history.json"
-        ):
-            continue
-        try:
-            with open(jf, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, dict):
-                    stem = base.replace("_Full.json", "").replace("_raw.json", "")
-                    doc_type_suffixes = tuple(f"_{pid}.json" for pid in facade.registry.ids()) + ("_unknown.json",)
-                    for dt_suffix in doc_type_suffixes:
-                        if stem.endswith(dt_suffix):
-                            stem = stem[:-len(dt_suffix)]
-                    if stem in seen_stems and not base.endswith("_Full.json"):
-                        continue
-                    seen_stems.add(stem)
-                    loaded.append(data)
-                elif isinstance(data, list):
-                    loaded.extend(data)
-        except Exception as e:
-            logger.debug(f"Пропущен некорректный JSON файл '{jf}': {e}")
+    # P0.7: единая каноническая выборка (один документ — одна запись,
+    # {stem}_Full.json приоритетен над легаси-копиями и сводными реестрами).
+    loaded = collect_result_documents(facade.results_dir, facade.registry)
 
     if loaded:
         saved = export_consolidated_registries(loaded, facade.results_dir)

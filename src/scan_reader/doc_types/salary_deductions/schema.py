@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
+import re
 from typing import Optional, Any
 from pydantic import BaseModel, Field, field_validator
 from scan_reader.core.fields import (
-    BIK_PATTERN,
     INN_PATTERN,
     KPP_PATTERN,
     ValidatedBankMixin,
+    ValidatedPartyMixin,
     digits_only,
     empty_str_to_none,
 )
@@ -27,7 +28,9 @@ class AuthorityInfo(BaseModel):
         return coerce_to_str(v)
 
 
-class EmployerInfo(BaseModel):
+class EmployerInfo(ValidatedPartyMixin):
+    """Работодатель на миксине: identifier_checks в verification.json
+    объявляет employer.inn — до P0.3 поле отсутствовало и проверка была мёртвой."""
     name: str = Field(default="", description="Наименование работодателя должника / организации")
     address: str = Field(default="", description="Адрес работодателя / бухгалтерии")
 
@@ -107,11 +110,17 @@ class DeductionFinances(BaseModel):
 
 
 class PaymentDetailsInfo(ValidatedBankMixin):
-    bik: str = Field(default="", description="БИК банка (9 цифр, например '015004950')")
-    payment_account: str = Field(default="", description="Расчётный счёт / лицевой счёт (20 цифр, например '03212643000000015113')")
+    """БИК и расчётный счёт наследуются из ValidatedBankMixin целиком
+    (Optional, пусто -> None, КС счёта по 565-П при наличии БИК).
+    До P0.3 поля переобъявлялись как str поверх миксина: валидатор миксина
+    превращал "" в None, аннотация str отвергала None — пустые банковские
+    реквизиты валили документ целиком. Дублирующие _check_bik_format/
+    _check_account_digits удалены вместе с переобъявлениями."""
     recipient: str = Field(default="", description="Полное наименование получателя платежа (УФК/банк)")
-    recipient_inn: str = Field(default="", description="ИНН получателя (10 или 12 цифр)")
-    recipient_kpp: str = Field(default="", description="КПП получателя (9 цифр)")
+    # Optional: before-валидатор превращает "" в None («не заполнено»),
+    # аннотация str отвергала бы None и валила документ (паттерн бага P0.2/P0.3).
+    recipient_inn: Optional[str] = Field(default=None, description="ИНН получателя (10 или 12 цифр)")
+    recipient_kpp: Optional[str] = Field(default=None, description="КПП получателя (9 цифр)")
     oktmo: str = Field(default="", description="Код ОКТМО (8 или 11 цифр, например '65756000')")
     uin: str = Field(default="", description="УИН - уникальный идентификатор платежа (20-25 цифр)")
     rosp_code: str = Field(default="", description="5-значный код ведомственного органа получателя, например '66050'")
@@ -121,9 +130,12 @@ class PaymentDetailsInfo(ValidatedBankMixin):
     def clean_strings(cls, v: Any) -> str:
         return coerce_to_str(v)
 
+    # Имя метода обязано отличаться от ValidatedBankMixin._blank_to_none:
+    # в Pydantic v2 одноимённый валидатор подкласса ЗАМЕЩАЕТ родительский,
+    # и bik/payment_account теряют преобразование ""->None.
     @field_validator('recipient_inn', 'recipient_kpp', mode='before')
     @classmethod
-    def _blank_to_none(cls, v: Any) -> Any:
+    def _recipients_blank_to_none(cls, v: Any) -> Any:
         return empty_str_to_none(v)
 
     @field_validator('recipient_inn', mode='after')
@@ -132,7 +144,7 @@ class PaymentDetailsInfo(ValidatedBankMixin):
         if v is None:
             return None
         cleaned = digits_only(v)
-        if cleaned is None or not __import__("re").match(INN_PATTERN, cleaned):
+        if cleaned is None or not re.match(INN_PATTERN, cleaned):
             raise ValueError(
                 f"ИНН получателя должен содержать 10 или 12 цифр, получено: {v!r}"
             )
@@ -149,7 +161,7 @@ class PaymentDetailsInfo(ValidatedBankMixin):
         if v is None:
             return None
         cleaned = digits_only(v)
-        if cleaned is None or not __import__("re").match(KPP_PATTERN, cleaned):
+        if cleaned is None or not re.match(KPP_PATTERN, cleaned):
             raise ValueError(f"КПП получателя должен содержать 9 цифр, получено: {v!r}")
         return cleaned
 
@@ -163,34 +175,6 @@ class PaymentDetailsInfo(ValidatedBankMixin):
             raise ValueError(
                 f"ОКТМО должен содержать 8 или 11 цифр, получено {len(cleaned) if cleaned else 0}: {v!r}"
             )
-        return cleaned
-
-    @field_validator('bik', 'payment_account', mode='before')
-    @classmethod
-    def _bank_blank_to_none(cls, v: Any) -> Any:
-        return empty_str_to_none(v)
-
-    @field_validator('bik', mode='after')
-    @classmethod
-    def _check_bik_format(cls, v: Any) -> Any:
-        if v is None:
-            return None
-        cleaned = digits_only(v)
-        if cleaned is None or not __import__("re").match(BIK_PATTERN, cleaned):
-            raise ValueError(
-                f"БИК должен содержать 9 цифр и начинаться с 04 (банк) "
-                f"или 01 (казначейство), получено: {v!r}"
-            )
-        return cleaned
-
-    @field_validator('payment_account', mode='after')
-    @classmethod
-    def _check_account_digits(cls, v: Any) -> Any:
-        if v is None:
-            return None
-        cleaned = digits_only(v)
-        if cleaned is None or len(cleaned) != 20:
-            raise ValueError(f"Банковский счёт должен содержать 20 цифр, получено: {v!r}")
         return cleaned
 
 

@@ -32,24 +32,156 @@ def _clean_source_title(file_path: Union[str, Path]) -> str:
     return title or "Документ"
 
 
+# P0.5: карта кодовых страниц RTF (\ansicpgNNNN) для декодирования \'hh-эскейпов.
+_RTF_CODEPAGE_MAP = {
+    1250: "cp1250", 1251: "cp1251", 1252: "cp1252", 1254: "cp1254",
+    1255: "cp1255", 1256: "cp1256", 1257: "cp1257", 1258: "cp1258",
+    874: "cp874", 932: "cp932", 936: "cp936", 949: "cp949", 950: "cp950",
+    10000: "mac-roman",
+}
+
+# P0.5: destination-группы, чье содержимое не является текстом документа.
+_RTF_SKIP_GROUPS = (
+    "fonttbl", "colortbl", "stylesheet", "info", "pict", "object", "objdata",
+    "themedata", "datastore", "listtable", "listoverridetable", "filetbl",
+    "xmlnstbl", "rsidtbl", "latentstyles", "colorschememapping", "panose",
+    "mmathPr", "shpinst", "nonshppict", "revtbl", "wgrffmtfilter", "fchars",
+    "lchars", "ftnsep", "ftnsepc", "ftncn", "aftnsep", "aftnsepc", "aftncn",
+)
+
+_HEX2 = re.compile(r"[0-9a-fA-F]{2}")
+_CTRL_WORD = re.compile(r"\\([a-zA-Z]+)(-?\d+)? ?")
+_UNICODE_ESCAPE = re.compile(r"\\u(-?\d+)")
+
+
+def _rtf_skip_group(raw: str, i: int, n: int) -> int:
+    """Пропуск группы с балансом скобок (вложенность + экранированные \\{ \\})."""
+    depth = 0
+    j = i
+    while j < n:
+        ch = raw[j]
+        if ch == "\\" and j + 1 < n and raw[j + 1] in "{}\\":
+            j += 2
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return j + 1
+        j += 1
+    return n
+
+
 def _strip_rtf_markup(raw: str) -> str:
     """
-    Извлечение читаемого текста из RTF-разметки (M-14).
-    Удаляет управляющие слова, группы шрифтов/цветов, escape-последовательности
-    и оставляет только текстовые фрагменты.
+    Извлечение читаемого текста из RTF-разметки (M-14, P0.5).
+    Поточный сканер вместо набора regex: обрабатывает \'hh-эскейпы через
+    кодовую страницу из \\ansicpg (по умолчанию 1252 по спецификации RTF),
+    \\uNNNN-эскейпы юникода (в т.ч. отрицательные), \\ucN-замещающие байты,
+    destination-группы ({\\*...}, {\\fonttbl...}) с пропуском по глубине и
+    экранированные скобки \\\\, \\{, \\}. Ранее кириллица в \'hh декодировалась
+    как Latin-1 (mojibake), а \\uNNNN уничтожалась вместе с контрол-вордами.
     """
-    # Удаляем группы {\*\...} (комментарии, метаданные, шрифтовые таблицы)
-    text = re.sub(r"\{\\\*[^{}]*\}", "", raw)
-    # Удаляем вложенные директивы {\fonttbl...}, {\colortbl...}
-    text = re.sub(r"\{\\(?:fonttbl|colortbl|stylesheet|info|pict|object)[^{}]*\}", "", text)
-    # Управляющие слова вида \par, \line, \pard, \b и т.п. (с числовым параметром или без)
-    text = re.sub(r"\\(?:par|line|page|tab|sect|pard|plain|itap|nestcell|nestrow)\b", "\n", text)
-    text = re.sub(r"\\[a-zA-Z]+-?\d*\s?", "", text)
-    # Спецсимволы RTF
-    text = text.replace("\\{", "{").replace("\\}", "}").replace("\\\\", "\\")
-    text = re.sub(r"[\'\\]([0-9a-fA-F]{2})", lambda m: chr(int(m.group(1), 16)) if m.group(1) != "00" else "", text)
-    # Убираем оставшиеся фигурные скобки разметки
-    text = text.replace("{", "").replace("}", "")
+    m = re.search(r"\\ansicpg(\d+)", raw[:2048])
+    encoding = _RTF_CODEPAGE_MAP.get(int(m.group(1)), "cp1252") if m else "cp1252"
+
+    out: list = []
+    hexbuf: list = []
+    i, n = 0, len(raw)
+    uc = 1  # число замещающих байтов после \uNNNN (управляется \ucN)
+
+    def _flush_hex() -> None:
+        if hexbuf:
+            try:
+                out.append(bytes(hexbuf).decode(encoding))
+            except (UnicodeDecodeError, LookupError):
+                out.append(bytes(hexbuf).decode("latin-1", errors="replace"))
+            hexbuf.clear()
+
+    while i < n:
+        ch = raw[i]
+        if ch == "{":
+            head = raw[i : i + 300]
+            if head.startswith("{\\*"):
+                i = _rtf_skip_group(raw, i, n)
+                continue
+            mw = re.match(r"\{\\([a-zA-Z]+)", head)
+            if mw and mw.group(1).lower() in _RTF_SKIP_GROUPS:
+                i = _rtf_skip_group(raw, i, n)
+                continue
+            i += 1  # групповая скобка — не текст
+            continue
+        if ch == "}":
+            i += 1
+            continue
+        if ch == "\\" and i + 1 < n:
+            nxt = raw[i + 1]
+            if nxt == "'":  # \'hh — байт в кодовой странице документа
+                h = raw[i + 2 : i + 4]
+                if len(h) == 2 and _HEX2.fullmatch(h):
+                    hexbuf.append(int(h, 16))
+                    i += 4
+                    continue
+                i += 2  # поврежденный эскейп
+                continue
+            if nxt == "u":
+                mu = _UNICODE_ESCAPE.match(raw, i)
+                if mu:
+                    _flush_hex()
+                    code = int(mu.group(1))
+                    if code < 0:
+                        code += 65536
+                    out.append(chr(code))
+                    i = mu.end()
+                    # замещающие байты: '?' или \'hh (по \ucN, обычно 1)
+                    for _ in range(uc):
+                        if i < n and raw[i] == "?":
+                            i += 1
+                        elif i + 3 < n and raw[i : i + 2] == "\\'" and _HEX2.fullmatch(raw[i + 2 : i + 4]):
+                            i += 4
+                        else:
+                            break
+                    continue
+            if nxt in "\\{}":  # экранированные литералы
+                _flush_hex()
+                out.append(nxt)
+                i += 2
+                continue
+            if nxt == "~":  # неразрывный пробел
+                _flush_hex()
+                out.append(" ")
+                i += 2
+                continue
+            if nxt in "*-_":  # мягкий дефис, индексы и т.п.
+                i += 2
+                continue
+            mw = _CTRL_WORD.match(raw, i)
+            if mw:
+                word = mw.group(1).lower()
+                if word == "uc":
+                    try:
+                        uc = abs(int(mw.group(2) or 1))
+                    except ValueError:
+                        uc = 1
+                    i = mw.end()
+                    continue
+                _flush_hex()
+                if word in ("par", "line", "page", "sect", "sectnum", "nestrow"):
+                    out.append("\n")
+                elif word in ("tab", "cell", "nestcell", "row"):
+                    out.append(" ")
+                i = mw.end()
+                continue
+            i += 2  # неизвестный эскейп — пропустить
+            continue
+        # обычный символ
+        _flush_hex()
+        out.append(ch)
+        i += 1
+
+    _flush_hex()
+    text = "".join(out)
     # Нормализуем пробелы и пустые строки
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)

@@ -234,42 +234,16 @@ class ScanReaderMCPServer:
                 return summary
 
             elif name == "export_results":
-                import glob
                 from ..excel_exporter import LegalExcelExporter
                 from ..core.json_exporter import export_consolidated_registries
+                from ..core.metrics_evaluator import collect_result_documents
 
                 results_dir = str(arguments.get("results_dir") or self.facade.results_dir)
                 target_format = arguments.get("target_format", "both")
 
-                json_files = glob.glob(os.path.join(results_dir, "*.json"))
-                loaded = []
-                for jf in json_files:
-                    base = os.path.basename(jf)
-                    # 0.9.3: без фильтра один документ грузился бы трижды
-                    # (Full + raw + карточка типа), а реестры и плоские записи
-                    # добавляли бы записи поверх собственных источников.
-                    if (
-                        base.startswith("run_metrics")
-                        or base.startswith("benchmark_")
-                        or base.startswith("Registry_")
-                        or base.startswith("all_documents")
-                        or base.endswith("_registry.json")
-                        or base.endswith("_registry_1c.json")
-                        or base.endswith("_Flat.json")
-                        or base.endswith("_raw.json")
-                        or base.endswith("_quality_metrics.json")
-                        or base == "metrics_history.json"
-                    ):
-                        continue
-                    try:
-                        with open(jf, "r", encoding="utf-8") as f:
-                            d = json.load(f)
-                            if isinstance(d, dict):
-                                loaded.append(d)
-                            elif isinstance(d, list):
-                                loaded.extend(d)
-                    except Exception as e:
-                        _srv_logger.debug(f"Пропущен некорректный JSON файл '{jf}': {e}")
+                # P0.7: единая каноническая выборка (один документ — одна запись):
+                # Registry_Full/raw/Flat и легаси-карточки не задваивают экспорт.
+                loaded = collect_result_documents(results_dir, self.facade.registry)
 
                 exported_files: List[str] = []
                 if loaded:

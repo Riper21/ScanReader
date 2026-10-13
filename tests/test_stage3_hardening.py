@@ -207,6 +207,60 @@ def test_m14_rtf_markup_stripped(tmp_path):
     assert "№12" in text
 
 
+# ---------------------------------------------------------------------------
+# P0.5: честный RTF-декодер (\'hh по \ansicpg, \uNNNN, destination-группы)
+# ---------------------------------------------------------------------------
+def test_p05_rtf_hex_escapes_decoded_via_ansicpg1251():
+    """P0.5: \'hh-эскейпы кириллицы декодируются по \\ansicpg1251, не Latin-1."""
+    from scan_reader.core.document_loader import _strip_rtf_markup
+
+    rtf = r"{\rtf1\ansi\ansicpg1251\deff0{\fonttbl{\f0 Times;}}\pard \'c8\'f1\'ef\'ee\'eb\'ed\'e8\'f2\'e5\'eb\'fc\'ed\'fb\'e9 \par}"
+    assert "Исполнительный" in _strip_rtf_markup(rtf)
+
+
+def test_p05_rtf_unicode_escapes_preserved():
+    """P0.5: \\uNNNN-эскейпы декодируются, а не уничтожаются с контрол-вордами."""
+    from scan_reader.core.document_loader import _strip_rtf_markup
+
+    rtf = r"{\rtf1\ansi\ansicpg1251\pard \u1048?\u1089?\u1087?\'e0\'ed\'e8\'e5 \par}"
+    assert "Испание" in _strip_rtf_markup(rtf)  # \u1048='И' \u1089='с' \u1087='п' (dec) + hex "ание"
+
+
+def test_p05_rtf_negative_unicode_escape():
+    """P0.5: отрицательные \\u-NNNN (int16-обход) декодируются корректно."""
+    from scan_reader.core.document_loader import _strip_rtf_markup
+
+    rtf = r"{\rtf1\pard \u-64447?\u-64456? \par}"
+    assert "си" in _strip_rtf_markup(rtf)  # 65536-64447=1089='с', 65536-64456=1080='и'
+
+
+def test_p05_rtf_skip_groups_do_not_leak_nested_content():
+    """P0.5: вложенные шейпы/картинки пропускаются целиком, текст вне групп — остается."""
+    from scan_reader.core.document_loader import _strip_rtf_markup
+
+    rtf = r"{\rtf1\pard {\*\shppict{\pict{\*\picprops 1x1}\picw10\pich10 hex}} \b Текст договора\b0  \par}"
+    text = _strip_rtf_markup(rtf)
+    assert "Текст договора" in text
+    assert "picw" not in text
+    assert "hex" not in text
+
+
+def test_p05_rtf_escaped_braces_are_literals():
+    """P0.5: экранированные \\{ \\} \\\\ остаются литералами, а не удаляются."""
+    from scan_reader.core.document_loader import _strip_rtf_markup
+
+    rtf = r"{\rtf1\pard Сумма \{100\\500\} руб \par}"
+    assert "Сумма {100\\500} руб" in _strip_rtf_markup(rtf)
+
+
+def test_p05_rtf_default_codepage_is_cp1252():
+    """P0.5: без \\ansicpg hex-эскейпы читаются как cp1252 (спецификация RTF)."""
+    from scan_reader.core.document_loader import _strip_rtf_markup
+
+    rtf = r"{\rtf1\ansi\deff0\pard caf\'e9 \par}"
+    assert "café" in _strip_rtf_markup(rtf)
+
+
 def test_m16_utf16_with_bom_detected(tmp_path):
     """M-16: UTF-16 LE с BOM читается корректно, без mojibake."""
     from scan_reader.core.document_loader import load_document

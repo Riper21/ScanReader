@@ -242,14 +242,19 @@ def test_extraction_marks_regex_recovered_amounts(facade, tmp_path):
     assert result.get("_recovered_by_regex"), "восстановление regex не помечено"
 
 
-def test_extraction_keeps_raw_reply_when_json_unparsable(facade, tmp_path):
+def test_extraction_keeps_raw_reply_when_json_unparsable(facade, tmp_path, monkeypatch):
+    """P0.6: после исчерпания попыток сырой ответ сохраняется и помечается."""
+    monkeypatch.setenv("SCANREADER_VLM_ATTEMPTS", "2")
     doc = tmp_path / "x.txt"
     doc.write_text("текст документа", encoding="utf-8")
-    facade._client = FakeClient("Извините, я не могу разобрать этот документ.")
+    facade._client = FakeClient(
+        "Извините, я не могу разобрать этот документ.",
+        "Всё ещё не могу разобрать документ.",
+    )
 
     result = facade.extract_document_data(str(doc), doc_type="hr_orders")
     assert result.get("_recovered_by_regex") == ["_raw_reply_unparsed"]
-    assert "raw_reply" in result or result.get("_recovered_by_regex")
+    assert result.get("raw_reply"), "сырой ответ модели должен сохраниться для диагностики"
 
 
 def test_extraction_uses_cache_on_second_call(facade, tmp_path):
@@ -290,6 +295,49 @@ def test_extraction_survives_model_exception(facade, tmp_path):
     result = facade.extract_document_data(str(doc), doc_type="hr_orders")
     assert result["_extraction_failed"] is True
     assert "timed out" in str(result.get("error", "")).lower()
+
+
+# =========================================================================
+# P0.6: ретрай при невалидном JSON и запрет кэширования эвристики
+# =========================================================================
+def test_extraction_retries_on_invalid_json(facade, tmp_path, monkeypatch):
+    """P0.6: ответ без JSON -> повторный запрос; успешный ответ используется."""
+    monkeypatch.setenv("SCANREADER_VLM_ATTEMPTS", "2")
+    doc = tmp_path / "retry.txt"
+    doc.write_text("текст документа", encoding="utf-8")
+    good = json.dumps({"doc_date": "01.02.2024", "doc_number": "77"}, ensure_ascii=False)
+    client = FakeClient("не могу разобрать документ", good)
+    facade._client = client
+
+    result = facade.extract_document_data(str(doc), doc_type="hr_orders")
+    assert len(client.requests) == 2, "невалидный JSON должен вызвать повторный запрос"
+    assert result.get("doc_number") == "77"
+    assert "_recovered_by_regex" not in result
+
+
+def test_invalid_json_response_not_cached(facade, tmp_path, monkeypatch):
+    """P0.6: ответ без JSON не должен закрепляться в кэше навсегда."""
+    monkeypatch.setenv("SCANREADER_VLM_ATTEMPTS", "1")
+    doc = tmp_path / "nocache.txt"
+    doc.write_text("текст документа", encoding="utf-8")
+    facade._client = FakeClient("Сожалею, не удалось прочитать документ.")
+
+    result = facade.extract_document_data(str(doc), doc_type="hr_orders")
+    assert "_raw_reply_unparsed" in result.get("_recovered_by_regex", [])
+    assert facade.cache.value is None, "провальный ответ не должен попадать в кэш"
+
+
+def test_regex_recovered_response_not_cached(facade, tmp_path, monkeypatch):
+    """P0.6: эвристически восстановленные суммы не кэшируются как эталон."""
+    monkeypatch.setenv("SCANREADER_VLM_ATTEMPTS", "1")
+    doc = tmp_path / "heur.txt"
+    doc.write_text("Взыскать 150 000,00 рублей.", encoding="utf-8")
+    reply = json.dumps({"doc_date": "17.06.2015", "finances": {"total_rub": None}}, ensure_ascii=False)
+    facade._client = FakeClient(reply)
+
+    result = facade.extract_document_data(str(doc), doc_type="enforcement_orders")
+    assert result.get("_recovered_by_regex"), "эвристика не помечена"
+    assert facade.cache.value is None, "эвристический ответ не должен попадать в кэш"
 
 
 def test_cache_class_accepts_initial_value():

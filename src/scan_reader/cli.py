@@ -327,8 +327,8 @@ def handle_verify(args: argparse.Namespace) -> int:
 
 def handle_export(args: argparse.Namespace) -> int:
     """Consolidate JSON files into 1C and Excel registries."""
-    import glob
     from .core.json_exporter import export_consolidated_registries
+    from .core.metrics_evaluator import collect_result_documents
     from .excel_exporter import LegalExcelExporter
 
     results_dir = Path(args.results_dir).resolve()
@@ -340,39 +340,10 @@ def handle_export(args: argparse.Namespace) -> int:
         else:
             return _emit_error(f"Каталог не найден: {results_dir}", EXIT_ERROR, args.json)
 
-    json_files = glob.glob(str(results_dir / "*.json"))
-    loaded = []
-    seen_stems = set()
-    for jf in json_files:
-        base = os.path.basename(jf)
-        if (
-            base.startswith("run_metrics")
-            or base.startswith("benchmark_")
-            or base.startswith("Registry_")
-            or base.endswith("_registry.json")
-            or base.endswith("_registry_1c.json")
-            or base.endswith("_Flat.json")
-            or base.endswith("_quality_metrics.json")
-            or base == "metrics_history.json"
-        ):
-            continue
-        try:
-            with open(jf, "r", encoding="utf-8") as f:
-                d = json.load(f)
-                if isinstance(d, dict):
-                    stem = base.replace("_Full.json", "").replace("_raw.json", "")
-                    doc_type_suffixes = tuple(f"_{pid}.json" for pid in get_registry().ids()) + ("_unknown.json",)
-                    for dt_suffix in doc_type_suffixes:
-                        if stem.endswith(dt_suffix):
-                            stem = stem[:-len(dt_suffix)]
-                    if stem in seen_stems and not base.endswith("_Full.json"):
-                        continue
-                    seen_stems.add(stem)
-                    loaded.append(d)
-                elif isinstance(d, list):
-                    loaded.extend(d)
-        except Exception as e:
-            _cli_logger.debug(f"Пропущен некорректный JSON файл '{jf}': {e}")
+    # P0.7: единая каноническая выборка вместо локального glob: один документ —
+    # одна запись ({stem}_Full.json приоритетен, легаси-копии и сводные
+    # реестры не задваивают экспорт).
+    loaded = collect_result_documents(results_dir, get_registry())
 
     if not loaded:
         return _emit_error(f"Нет файлов результатов в каталоге: {results_dir}", EXIT_ERROR, args.json)
@@ -400,7 +371,6 @@ def handle_export(args: argparse.Namespace) -> int:
 
 def handle_benchmark(args: argparse.Namespace) -> int:
     """Run benchmark against ground truth."""
-    import glob
     from .core.metrics_evaluator import evaluate_dataset, generate_run_summary
     from .type_registry import get_registry
 
@@ -418,22 +388,17 @@ def handle_benchmark(args: argparse.Namespace) -> int:
     if not gt_dir.is_dir():
         return _emit_error(f"Каталог эталонов не найден: {gt_dir}", EXIT_ERROR, args.json)
 
-    results_map: Dict[str, List[Dict[str, Any]]] = {}
-    for jf in glob.glob(str(results_dir / "*.json")):
-        base = os.path.basename(jf)
-        if base.startswith("run_metrics") or base.startswith("benchmark_") or base.endswith("_quality_metrics.json"):
-            continue
-        try:
-            with open(jf, "r", encoding="utf-8") as f:
-                d = json.load(f)
-                items = d if isinstance(d, list) else [d]
-                for it in items:
-                    dt = it.get("doc_type", "unknown")
-                    results_map.setdefault(dt, []).append(it)
-        except Exception as e:
-            _cli_logger.debug(f"Пропущен некорректный JSON файл '{jf}': {e}")
-
     registry = get_registry()
+
+    # P0.7: единая выборка документов (collect_result_documents), а не сырой
+    # glob по *.json: Registry_Full.json и легаси-копии задваивали датасет.
+    from .core.metrics_evaluator import collect_result_documents
+
+    results_map: Dict[str, List[Dict[str, Any]]] = {}
+    for it in collect_result_documents(results_dir, registry):
+        dt = it.get("doc_type", "unknown")
+        results_map.setdefault(dt, []).append(it)
+
     category_metrics: Dict[str, Dict[str, Any]] = {}
 
     for plugin in registry.enabled().values():

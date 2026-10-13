@@ -8,6 +8,7 @@
   {"path": "party_two.inn", "label": "ИНН Стороны 2", "kind": "text"},
   {"path": "claim_subject", "label": "Предмет договора", "kind": "text"},
   {"path": "finances.total_rub", "label": "Сумма договора (руб)", "kind": "number"},
+  {"path": "finances.total_rub_no_vat", "label": "Сумма без НДС (руб)", "kind": "number"},
   {"path": "finances.vat_rate", "label": "Ставка НДС", "kind": "text"},
   {"path": "term_end", "label": "Срок действия", "kind": "text"}
 ]

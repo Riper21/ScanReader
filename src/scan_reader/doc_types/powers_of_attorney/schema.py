@@ -26,10 +26,9 @@ class AttorneyAgentInfo(ValidatedPartyMixin):
     passport_issued_by: str = Field(default="", description="Кем выдан паспорт")
     passport_issue_date: str = Field(default="", description="Дата выдачи паспорта")
     snils: str = Field(default="", description="СНИЛС представителя")
-    inn: str = Field(default="", description="ИНН представителя")
     registration_address: str = Field(default="", description="Адрес регистрации")
 
-    @field_validator("full_name", "passport_series", "passport_number", "passport_issued_by", "passport_issue_date", "snils", "inn", "registration_address", mode="before")
+    @field_validator("full_name", "passport_series", "passport_number", "passport_issued_by", "passport_issue_date", "snils", "registration_address", mode="before")
     @classmethod
     def clean_strings(cls, v: Any) -> str:
         return coerce_to_str(v)

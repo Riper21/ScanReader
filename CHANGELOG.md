@@ -6,6 +6,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.4] - 2026-10-13
+
+Post-audit hardening (phase P0 of the multi-agent audit): silent
+verification gaps and measurement honesty.
+
+### Fixed
+
+- `commercial_contracts`: `ContractFinances.total_rub_no_vat` was missing
+  from the schema, so the money rule from `verification.json`
+  (total = no_vat + VAT, min_components=2) never gathered two components
+  and contract price reconciliation never ran. The field is restored
+  (prompt and flat columns follow).
+- `enforcement_orders`: `periodic_rub` was declared numeric with `ge=0`
+  while real writs phrase it as free text ("50% заработка ежемесячно") —
+  every such document failed validation. It is now a text field.
+- `powers_of_attorney`: `AttorneyAgentInfo.inn` redeclared the mixin's
+  checksum-validated `inn: str`, so a blank INN crashed validation instead
+  of clearing to None.
+- `salary_deductions`: `PaymentDetailsInfo` redeclared `bik` /
+  `payment_account` with same-named validators that silently REPLACED the
+  mixin validators (Pydantic v2 name override), disabling blank-to-None
+  and BIK/account checksums; `recipient_inn`/`recipient_kpp` rejected
+  nulls, so the regex money recovery could never fill them.
+- RTF loader: `\'hh` escapes were decoded as Latin-1 regardless of
+  `\ansicpg` (Cyrillic mojibake) and `\uNNNN` escapes were destroyed
+  together with control words. A streaming RTF scanner now honors the
+  codepage, unicode escapes (incl. negative int16), `\ucN` substitute
+  bytes and destination groups with brace balance.
+- VLM extraction: a single invalid-JSON reply was final and was cached
+  forever, so re-runs kept returning garbage; the raw reply was dropped
+  by schema `model_dump()`, hiding the evidence. Extraction now retries
+  (`SCANREADER_VLM_ATTEMPTS`, default 2), failure/heuristic answers are
+  never cached, and `raw_reply` survives into the result.
+- Result-directory collection (`evaluate_dataset` dir-mode, CLI
+  benchmark/export, launcher rebuild, MCP export) read every `*.json`,
+  so `Registry_Full.json` re-counted each document and legacy copies
+  doubled the dataset (double-counted benchmark scores). One canonical
+  collector `collect_result_documents` (Full-priority, legacy fallback,
+  `(file_path, doc_type)` dedup) is used everywhere now.
+
+### Tests
+
+689 tests (was 667): P0.1–P0.7 regression coverage — contract money rule
+alive, `periodic_rub` as text, blank INN/BIK accepted, RTF codepage and
+unicode escapes, retry + no-cache-on-failure, single-count collection.
+
 ## [0.9.3] - 2026-09-29
 
 Thin output contract. **Breaking:** the 1C-import file layer is removed;

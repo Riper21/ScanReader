@@ -20,15 +20,17 @@ class PartyInfo(ValidatedPartyMixin):
 
 
 class ContractFinances(BaseModel):
-
-
+    # P0.4: total_rub_no_vat добавлен, иначе money-rule из verification.json
+    # (total_rub = total_rub_no_vat + vat_amount_rub, min_components=2) не
+    # набирал двух слагаемых и сверка цены договора никогда не выполнялась.
     total_rub: Optional[float] = Field(ge=0, default=None, description="Общая цена/сумма договора (руб)")
+    total_rub_no_vat: Optional[float] = Field(ge=0, default=None, description="Цена/сумма договора без НДС (руб)")
     vat_included: Optional[bool] = Field(default=None, description="Включен ли НДС в сумму (true/false)")
     vat_rate: str = Field(default="", description="Ставка НДС (20%, 10%, 0%, Без НДС)")
     vat_amount_rub: Optional[float] = Field(ge=0, default=None, description="Сумма НДС (руб)")
     currency: str = Field(default="RUB", description="Валюта договора")
 
-    @field_validator("total_rub", "vat_amount_rub", mode="before")
+    @field_validator("total_rub", "total_rub_no_vat", "vat_amount_rub", mode="before")
     @classmethod
     def clean_amounts(cls, v: Any) -> Optional[float]:
         return parse_russian_currency(v)

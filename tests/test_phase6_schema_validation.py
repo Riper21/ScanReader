@@ -167,10 +167,17 @@ def test_negative_amount_rejected_not_silently_dropped():
 
 
 def test_money_fields_have_non_negative_constraint():
-    """ge=0 объявлен декларативно, а не только через валидатор."""
+    """ge=0 объявлен декларативно, а не только через валидатор.
+
+    Числовые *_rub-поля обязаны иметь ge=0. Строковые *_rub-поля (напр.
+    periodic_rub с текстовой формулировкой «1/4 части заработка») обязаны
+    НЕ иметь числовых ограничений: ge на str-поле в Pydantic v2 даёт
+    TypeError при любом непустом значении (баг P0.1 — документы
+    с периодическими платежами падали целиком).
+    """
     from annotated_types import Ge
 
-    found = False
+    found_numeric = False
     for plugin_id, plugin in sorted(get_registry().enabled().items()):
         if "finances" not in plugin.schema_cls.model_fields:
             continue
@@ -180,12 +187,19 @@ def test_money_fields_have_non_negative_constraint():
         for name, info in model.model_fields.items():
             if not name.endswith("_rub"):
                 continue
-            found = True
+            numeric = info.annotation is float or float in typing.get_args(info.annotation)
             constraints = [c for c in info.metadata if isinstance(c, Ge)]
-            assert constraints and constraints[0].ge == 0, (
-                f"{plugin_id}.{name}: нет ограничения ge=0 (metadata={info.metadata})"
-            )
-    assert found, "не найдено ни одного денежного поля"
+            if numeric:
+                found_numeric = True
+                assert constraints and constraints[0].ge == 0, (
+                    f"{plugin_id}.{name}: нет ограничения ge=0 (metadata={info.metadata})"
+                )
+            else:
+                assert not constraints, (
+                    f"{plugin_id}.{name}: строковое поле *_rub не должно иметь ge=0 "
+                    f"(ge на str в Pydantic v2 даёт TypeError; metadata={info.metadata})"
+                )
+    assert found_numeric, "не найдено ни одного денежного поля"
 
 
 @pytest.mark.parametrize("value", [0.0, 1000.0, "150 000,00", "1000 руб.", "45.000,00"])
@@ -273,3 +287,162 @@ def test_validated_party_mixin_is_base_of_party_models():
     """Стороны наследуют общую валидацию, а не дублируют её."""
     _pid, model = _first_party_model()
     assert issubclass(model, ValidatedPartyMixin)
+
+
+# =========================================================================
+# P0.1 — enforcement_orders: периодические платежи
+# =========================================================================
+def test_enforcement_periodic_rub_accepts_text_formulation():
+    """
+    periodic_rub — СТРОКОВОЕ поле («1/4 части заработка»). Раньше на нём висел
+    ge=0: Pydantic v2 применяет ge к строке и бросает TypeError при любом
+    непустом значении — документ с алиментами падал целиком.
+    """
+    plugin = get_registry().get("enforcement_orders")
+    finances = _nested(plugin.schema_cls.model_fields["finances"])
+    assert finances(periodic_rub="1/4 части заработка").periodic_rub == "1/4 части заработка"
+    assert finances(periodic_rub="алименты 5000 руб. ежемесячно").periodic_rub.startswith("алименты")
+    assert finances().periodic_rub == ""
+
+
+def test_enforcement_order_doc_validates_full_payload():
+    """До P0.1 схема enforcement_orders не была покрыта ни одним тестом (0 %)."""
+    plugin = get_registry().get("enforcement_orders")
+    doc = plugin.schema_cls.model_validate({
+        "file_name": "РОСП_постановление.pdf",
+        "doc_type": "Постановление о возбуждении исполнительного производства",
+        "doc_date": "01.03.2026",
+        "reg_number": "1234/26/77001-ИП",
+        "ip_number": "12345/21/77001-ИП",
+        "fssp": {"name": "РОСП по ЮЗАО г. Москвы", "region": "Москва", "officer": "Иванов И.И."},
+        "court": {"name": "Зюзинский районный суд", "act_date": "15.01.2026", "doc_type": "Исполнительный лист"},
+        "claimant": {"name": "ООО «Ромашка»", "details": "ИНН 7707083893, г. Москва"},
+        "debtor": {"name": "Иванов Иван Иванович", "details": "10.05.1980, г. Москва"},
+        "claim_subject": "взыскание задолженности",
+        "finances": {
+            "main_debt_rub": 50000.0,
+            "court_costs_rub": 2000.0,
+            "periodic_rub": "1/4 части заработка",
+            "total_rub": 52000.0,
+        },
+        "has_signature_stamp": True,
+    })
+    assert doc.ip_number == "12345/21/77001-ИП"
+    assert doc.finances.periodic_rub == "1/4 части заработка"
+    assert doc.finances.total_rub == 52000.0
+    assert doc.has_signature_stamp is True
+
+
+def test_enforcement_order_doc_rejects_invalid_inn():
+    """Стороны на ValidatedPartyMixin: невалидный ИНН отвергается схемой."""
+    plugin = get_registry().get("enforcement_orders")
+    with pytest.raises(ValueError):
+        plugin.schema_cls.model_validate({"debtor": {"name": "ООО «Фиктив»", "inn": "7701234567"}})
+
+
+# =========================================================================
+# P0.2 — powers_of_attorney: ИНН поверенного
+# =========================================================================
+def test_poa_agent_empty_inn_is_none_not_error():
+    """
+    Раньше AttorneyAgentInfo переобъявлял inn как str поверх миксина:
+    before-валидатор миксина превращал "" в None, аннотация str отвергала
+    None — документ доверенности с незаполненным ИНН поверенного (частая
+    ситуация) падал целиком ValidationError'ом.
+    """
+    plugin = get_registry().get("powers_of_attorney")
+    model = _nested(plugin.schema_cls.model_fields["agent"])
+    assert model(inn="").inn is None
+    assert model(inn="7707083893").inn == "7707083893"
+    with pytest.raises(ValueError):
+        model(inn="7701234567")
+
+
+def test_poa_full_document_with_empty_agent_inn_validates():
+    doc = get_registry().get("powers_of_attorney").schema_cls.model_validate({
+        "issue_date": "01.03.2026",
+        "valid_until": "01.03.2029",
+        "principal": {"name": "ООО «Ромашка»", "inn": "7707083893"},
+        "agent": {"full_name": "Сидоров С.С.", "inn": ""},
+        "is_notarized": True,
+    })
+    assert doc.agent.inn is None
+    assert doc.principal.inn == "7707083893"
+
+
+# =========================================================================
+# P0.3 — salary_deductions: банковский блок и реквизиты работодателя
+# =========================================================================
+def test_salary_bank_blank_fields_are_none_not_error():
+    """
+    PaymentDetailsInfo переобъявлял bik/payment_account как str поверх
+    ValidatedBankMixin ("" -> None отвергался аннотацией str) и держал
+    одноимённый _blank_to_none, который в Pydantic v2 ЗАМЕЩАЛ миксиновый
+    валидатор. Пустые банковские реквизиты валили документ целиком.
+    """
+    model = _payment_model()
+    pd = model(bik="", payment_account="")
+    assert pd.bik is None and pd.payment_account is None
+    pd2 = model(bik="015004950", payment_account="03212643000000015113")
+    assert pd2.bik == "015004950" and pd2.payment_account == "03212643000000015113"
+
+
+def test_salary_blank_recipient_inn_is_none_not_error():
+    """Тот же паттерн на recipient_inn/recipient_kpp: str + ""->None = падение."""
+    model = _payment_model()
+    assert model(recipient_inn="", recipient_kpp="").recipient_inn is None
+    assert model(recipient_inn="", recipient_kpp="").recipient_kpp is None
+
+
+def test_salary_employer_inn_identifier_check_is_alive():
+    """
+    verification.json salary_deductions объявляет identifier_checks
+    employer.inn — до P0.3 поля не существовало и проверка была мёртвой.
+    """
+    plugin = get_registry().get("salary_deductions")
+    employer = _nested(plugin.schema_cls.model_fields["employer"])
+    assert "inn" in employer.model_fields
+    assert employer(inn="").inn is None
+    assert employer(inn="7707083893").inn == "7707083893"
+    with pytest.raises(ValueError):
+        employer(inn="7701234567")
+
+
+def test_salary_full_document_with_blank_bank_details_validates():
+    doc = get_registry().get("salary_deductions").schema_cls.model_validate({
+        "employer": {"name": "ООО «Работодатель»", "inn": ""},
+        "payment_details": {"bik": "", "payment_account": "", "recipient_inn": ""},
+        "finances": {"debt_amount_rub": 45000.0, "total_deduction_rub": 45000.0, "deduction_percentage": "50%"},
+    })
+    assert doc.payment_details.bik is None
+    assert doc.employer.inn is None
+
+
+# =========================================================================
+# P0.4 — commercial_contracts: сверка цены договора
+# =========================================================================
+def test_commercial_contract_money_rule_is_alive():
+    """
+    До P0.4 слагаемое finances.total_rub_no_vat из verification.json
+    отсутствовало в ContractFinances: правило (total = no_vat + vat,
+    min_components=2) не набирало двух компонентов и сверка цены договора
+    НИКОГДА не выполнялась — сердце Правила 2.
+    """
+    from scan_reader.verifier.auditor import ZeroTrustAuditor
+
+    plugin = get_registry().get("commercial_contracts")
+    finances = _nested(plugin.schema_cls.model_fields["finances"])
+    assert "total_rub_no_vat" in finances.model_fields
+
+    consistent = {
+        "finances": {"total_rub": 125000.0, "total_rub_no_vat": 104166.67, "vat_amount_rub": 20833.33}
+    }
+    report = ZeroTrustAuditor.audit_document(consistent, doc_type="commercial_contracts")
+    codes = [i.code for i in report.issues]
+    assert "CONTRACT_TOTAL_DISCREPANCY" not in codes
+
+    inconsistent = {
+        "finances": {"total_rub": 150000.0, "total_rub_no_vat": 104166.67, "vat_amount_rub": 20833.33}
+    }
+    report_bad = ZeroTrustAuditor.audit_document(inconsistent, doc_type="commercial_contracts")
+    assert any(i.code == "CONTRACT_TOTAL_DISCREPANCY" for i in report_bad.issues)

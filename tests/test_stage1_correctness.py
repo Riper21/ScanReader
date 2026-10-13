@@ -159,6 +159,59 @@ def test_c08_evaluate_dataset_mcp_directory_support():
         assert "categories" in summary
 
 
+# ---------------------------------------------------------------------------
+# P0.7: каталог результатов не задваивает датасет
+# ---------------------------------------------------------------------------
+def test_p07_collect_result_documents_no_double_count(tmp_path):
+    """P0.7: реестры и легаси-копии не удваивают датасет; {stem}_Full приоритетен."""
+    from scan_reader.core.metrics_evaluator import collect_result_documents
+
+    doc = {"file_name": "test.pdf", "doc_type": "powers_of_attorney", "data": {"x": 1}}
+    (tmp_path / "test_Full.json").write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+    # Легаси-копии того же документа
+    (tmp_path / "test_raw.json").write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+    (tmp_path / "test_powers_of_attorney.json").write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+    # Сводный реестр вносил бы каждый документ второй раз
+    (tmp_path / "Registry_Full.json").write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+    # Отчёты метрик — не документы
+    (tmp_path / "run_metrics_summary.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "metrics_history.json").write_text("[]", encoding="utf-8")
+
+    records = collect_result_documents(tmp_path, get_registry())
+    assert len(records) == 1
+    assert records[0]["file_name"] == "test.pdf"
+
+
+def test_p07_collect_result_documents_legacy_without_full(tmp_path):
+    """P0.7: легаси-артефакт без Full-двойника учитывается ровно один раз."""
+    from scan_reader.core.metrics_evaluator import collect_result_documents
+
+    doc = {"file_name": "old.pdf", "doc_type": "powers_of_attorney", "data": {"x": 1}}
+    (tmp_path / "old_powers_of_attorney.json").write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+    (tmp_path / "old_raw.json").write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+
+    records = collect_result_documents(tmp_path, get_registry())
+    assert len(records) == 1
+
+
+def test_p07_evaluate_dataset_dir_mode_counts_once(tmp_path):
+    """P0.7: бенчмарк в dir-режиме не задваивает документы через реестр."""
+    doc = {
+        "file_name": "test.pdf",
+        "doc_type": "powers_of_attorney",
+        "data": {"principal": {"name": "ООО Тест"}},
+    }
+    (tmp_path / "test_Full.json").write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+    (tmp_path / "Registry_Full.json").write_text(json.dumps([doc], ensure_ascii=False), encoding="utf-8")
+    gt_dir = tmp_path / "gt"
+    gt_dir.mkdir()
+
+    metrics = evaluate_dataset(tmp_path, gt_dir, get_registry())
+    cat = metrics.get("powers_of_attorney")
+    assert cat is not None
+    assert cat.get("total_documents") == 1, "документ задвоен через Registry_Full.json"
+
+
 def test_c09_mcp_scan_document_audits_extracted_data(monkeypatch, tmp_path):
     """C-09: MCP scan_document passes result['data'] and raw_text to ZeroTrustAuditor."""
     # H-20: временный каталог должен быть в whitelist разрешенных корней
