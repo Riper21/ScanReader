@@ -17,6 +17,7 @@ from .math_verifier import (
     parse_percentage_value,
     split_deduction_basis,
     verify_deduction_percentage,
+    verify_tk138_ceiling,
 )
 from .spec import VerificationSpec, get_nested_value, resolve_spec
 from .status import VerificationIssue, VerificationReport, VerificationStatus
@@ -555,6 +556,48 @@ class ZeroTrustAuditor:
                     issues.append(
                         VerificationIssue(severity, "STATUTORY_LIMIT_ALERT", msg, limit["path"])
                     )
+
+            # P4.1: ст. 138 ТК РФ — удержание ≤ 20% ОБЩЕГО месячного заработка.
+            # До этого шага verify_tk138_ceiling существовал, но не вызывался
+            # никем, кроме тестов: 20%-й потолок фактически не проверялся.
+            # База (amount_paths/income_paths) заявляется плагином; если доход
+            # не извлечён — проверка честно не выполняется, а не «проходит».
+            amount_paths = list(limit.get("amount_paths") or [])
+            income_paths = list(limit.get("income_paths") or [])
+            if amount_paths and income_paths:
+                amount_raw, amount_path = _first_alternative(data, amount_paths)
+                income_raw, _income_path = _first_alternative(data, income_paths)
+                if amount_raw is not None and income_raw is not None:
+                    tk_severity = str(limit.get("severity", "error")).lower()
+                    amount_val = _to_number(amount_raw)
+                    income_val = _to_number(income_raw)
+                    if amount_val is None or income_val is None:
+                        # Нечисловые значения не «проходят молча»: нечитаемая
+                        # база лимита — это ошибка данных, а не отсутствие проверки.
+                        issues.append(
+                            VerificationIssue(
+                                tk_severity,
+                                "TK138_CEILING_EXCEEDED",
+                                f"Нечисловые данные для лимита ст. 138 ТК РФ: "
+                                f"удержание {amount_raw!r}, доход {income_raw!r}",
+                                amount_path or limit["path"],
+                            )
+                        )
+                        details["tk138_checked"] = True
+                        details["tk138_verified_ok"] = False
+                    else:
+                        ok, msg = verify_tk138_ceiling(amount_val, income_val)
+                        details["tk138_checked"] = True
+                        details["tk138_verified_ok"] = ok
+                        if not ok:
+                            issues.append(
+                                VerificationIssue(
+                                    tk_severity,
+                                    "TK138_CEILING_EXCEEDED",
+                                    msg,
+                                    amount_path or limit["path"],
+                                )
+                            )
 
     @classmethod
     def _apply_money_rule(

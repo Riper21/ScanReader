@@ -273,7 +273,11 @@ class LegalDocPlatformFacade:
                             doc.close()
                         except Exception as close_err:
                             logger.debug(f"Не удалось закрыть PDF '{file_path}': {close_err}")
-        except Exception:
+        except Exception as e:
+            # P4.5 (Правило 1): причина недоступности текста логируется, а не
+            # глотается молча. Последствие изолировано выше по потоку:
+            # gate_source="none" -> GATE_NOT_EXECUTED в отчёте аудита.
+            logger.debug(f"Текстовый слой для аудита недоступен '{file_path}': {e}")
             return None
         return None
 
@@ -1109,7 +1113,14 @@ class LegalDocPlatformFacade:
                 try:
                     with open(gt_path, "r", encoding="utf-8") as gf:
                         gt_data = json.load(gf)
-                except Exception:
+                except Exception as e:
+                    # P4.5 (Правила 1+8): причина «not_measured» обязана быть
+                    # видимой. Раньше битый эталон молча превращался в его
+                    # отсутствие, и деградация бенчмарка была незаметна.
+                    logger.warning(
+                        f"Ground truth '{gt_path}' не прочитан — бенчмарк этого "
+                        f"документа будет not_measured: {e}"
+                    )
                     gt_data = None
 
         if extraction_failed:

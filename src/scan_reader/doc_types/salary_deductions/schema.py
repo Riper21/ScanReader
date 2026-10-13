@@ -44,10 +44,14 @@ class DeductionFinances(BaseModel):
     debt_amount_rub: Optional[float] = Field(default=None, ge=0, description="Основная задолженность (руб.)")
     fee_penalty_rub: Optional[float] = Field(default=None, ge=0, description="Госпошлина / проценты (руб.)")
     total_deduction_rub: Optional[float] = Field(default=None, ge=0, description="Итого к удержанию (руб.)")
+    # P4.1: база для лимита ст. 138 ТК РФ (20% общего месячного заработка).
+    # До этого шага verify_tk138_ceiling не с чем было сверять: поле дохода
+    # отсутствовало, и правило оставалось мёртвым кодом.
+    salary_rub: Optional[float] = Field(default=None, ge=0, description="Месячная зарплата / доход должника до удержания (руб.)")
     deduction_percentage: str = Field(default="", description="Процент удержания (число, «50 процентов», «1/4 части»)")
     periodic_details: str = Field(default="", description="Периодичность и периодическая сумма удержания")
 
-    @field_validator('debt_amount_rub', 'fee_penalty_rub', 'total_deduction_rub', mode='before')
+    @field_validator('debt_amount_rub', 'fee_penalty_rub', 'total_deduction_rub', 'salary_rub', mode='before')
     @classmethod
     def clean_amounts(cls, v: Any) -> Optional[float]:
         return parse_russian_currency(v)

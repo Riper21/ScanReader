@@ -64,7 +64,7 @@ field names; the salary-specific flat-1C builder moves into its plugin.
 
 ### Tests
 
-802 tests (was 715): the plugin-isolation scanner now scans the facade,
+813 tests (was 715): the plugin-isolation scanner now scans the facade,
 guardrails, exporter and auditor for forbidden field-name tokens with
 an interpreter vocabulary exemption; flat-1C column declarations are
 schema-validated per plugin; recovery declarations and their sources
@@ -81,13 +81,53 @@ integrity scanner validates identifiers inside text fields (format
 «ИНН N» — it caught an invalid checksum in the enforcement-order
 reference set); an AST scanner forbids silent `except: pass` handlers
 across the package (Rule 1); launcher smoke tests cover the banner,
-explorer-open failure logging and input-root resolution.
+explorer-open failure logging and input-root resolution; phase P4 adds
+eleven tests: the Labour Code Art. 138 ceiling wired into the auditor
+(excess, within-limit, no-income, unreadable base), UPD
+shipper/consignee INN checksum and gate coverage, and the crime-damage
+70 % basis.
 
 Hygiene (phase P3 of the multi-agent audit): dead code removal,
 dependency and environment cleanup, honest coverage measurement.
 
+Verification gaps (phase P4 of the multi-agent audit): the 20 % ceiling
+of Labour Code Art. 138 was dead code, UPD shipper/consignee INNs
+escaped both the checksum report and the cross-modal gate, and three
+swallowed exceptions hid the causes of degraded benchmarks.
+
 ### Fixed
 
+- The 20 % ceiling of Labour Code Art. 138 (deduction ≤ 20 % of the
+  TOTAL monthly earnings — it applies simultaneously with the 50/70 %
+  limits of Art. 99 229-FZ, which count against take-home pay) was
+  implemented (`verify_tk138_ceiling`) but never called by the pipeline
+  — only by tests. It is now wired into the auditor through the plugin
+  declaration (`amount_paths`/`income_paths` in the `deduction_limit`
+  block of `verification.json`); the salary-deductions schema and prompt
+  extract the monthly income (`finances.salary_rub`), a missing income
+  honestly leaves the check unexecuted (`tk138_checked` absent) instead
+  of silently passing, and an unreadable numeric base raises an error
+  rather than passing quietly. Violations raise
+  `TK138_CEILING_EXCEEDED`.
+- UPD shipper/consignee INNs were extracted but neither checksum-audited
+  nor gated: a hallucinated shipper INN could pass (the schema mixin
+  rejects an invalid checksum, but a valid-looking one absent from the
+  document text was invisible). Both parties are now declared in
+  `invoices_upd/verification.json` (`parties` + `gate_fields`): an
+  invalid checksum raises `INVALID_INN`, a valid-but-absent-from-text
+  INN raises `HALLUCINATION_RISK`.
+- Crime damage («ущерб, причинённый преступлением») is the fourth 70 %
+  case of Art. 99(2) 229-FZ and is now a deduction-limit basis marker
+  (`преступл`); it is not harm-to-health, which has no percentage
+  ceiling.
+- The launcher wrote `benchmark_metrics_summary.json` with a plain
+  `open("w")` — a crash mid-write left a truncated report (Rule 5). It
+  now goes through `write_atomic`.
+- Three swallowed exceptions now log their cause (behaviour unchanged):
+  raw-text extraction for the audit (facade, debug level) and
+  ground-truth reads in the facade and CLI (warning — a corrupted
+  reference set silently degraded benchmarks to `not_measured`,
+  Rule 8).
 - The ground-truth set `enforcement_orders.json` (doc #4, debtor legal
   entity) carried INN 7708123456 which fails the FNS checksum — the
   system would be fined for a non-existent error. Replaced with the

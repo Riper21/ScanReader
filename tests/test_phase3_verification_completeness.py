@@ -16,9 +16,11 @@ from scan_reader.verifier.auditor import ZeroTrustAuditor as A, _to_number
 from scan_reader.verifier.checksums import validate_bik, validate_inn
 from scan_reader.verifier.math_verifier import (
     parse_percentage_value,
+    split_deduction_basis,
     verify_deduction_percentage,
     verify_tk138_ceiling,
 )
+from scan_reader.verifier.spec import resolve_spec
 
 RAW = "Исполнительный лист. Взыскать 224616 рублей 01 копейку."
 
@@ -290,6 +292,141 @@ def test_tk138_ceiling_accepts_within_limit():
 def test_tk138_ceiling_ignores_missing_income():
     ok, _ = verify_tk138_ceiling(amount_rub=50000.0, total_monthly_income_rub=None)
     assert ok is True
+
+
+# =========================================================================
+# P4.1: ТК-138 подключён к аудитору через декларацию плагина
+# =========================================================================
+SD_EXCESS = {
+    "debt_amount_rub": 50000.0,
+    "fee_penalty_rub": 0.0,
+    "total_deduction_rub": 50000.0,
+    "salary_rub": 100000.0,
+    "deduction_percentage": "50%",
+}
+
+SD_WITHIN = {
+    "debt_amount_rub": 14000.0,
+    "fee_penalty_rub": 1000.0,
+    "total_deduction_rub": 15000.0,
+    "salary_rub": 100000.0,
+    "deduction_percentage": "15%",
+}
+
+
+def test_p4_tk138_declared_in_salary_deductions_spec():
+    limit = resolve_spec("salary_deductions").deduction_limit
+    assert limit is not None
+    assert "finances.salary_rub" in limit["income_paths"]
+    assert any("total_deduction_rub" in p for p in limit["amount_paths"])
+
+
+def test_p4_tk138_wired_into_auditor():
+    """Удержание 50% общего заработка (50000 из 100000) обязано ловиться."""
+    report = A.audit_document(
+        {"finances": dict(SD_EXCESS), "claim_subject": "кредит"},
+        doc_type="salary_deductions",
+        raw_ocr_text=_raw_for(SD_EXCESS),
+    )
+    assert "TK138_CEILING_EXCEEDED" in _codes(report)
+    assert report.details["tk138_checked"] is True
+    assert report.details["tk138_verified_ok"] is False
+    assert report.status == VerificationStatus.DISCREPANCY_DETECTED
+
+
+def test_p4_tk138_within_limit_passes():
+    report = A.audit_document(
+        {"finances": dict(SD_WITHIN), "claim_subject": "кредит"},
+        doc_type="salary_deductions",
+        raw_ocr_text=_raw_for(SD_WITHIN),
+    )
+    assert "TK138_CEILING_EXCEEDED" not in _codes(report)
+    assert report.details["tk138_checked"] is True
+    assert report.details["tk138_verified_ok"] is True
+
+
+def test_p4_tk138_without_income_honestly_not_checked():
+    """Доход не извлечён — проверка не выполняется, а не «проходит» молча."""
+    finances = {k: v for k, v in SD_WITHIN.items() if k != "salary_rub"}
+    report = A.audit_document(
+        {"finances": finances, "claim_subject": "кредит"},
+        doc_type="salary_deductions",
+        raw_ocr_text=_raw_for(finances),
+    )
+    assert "tk138_checked" not in report.details
+    assert "TK138_CEILING_EXCEEDED" not in _codes(report)
+
+
+def test_p4_tk138_unreadable_base_is_reported_not_passed():
+    """Нечисловые суммы в базе лимита — ошибка данных, а не тихий пропуск."""
+    finances = {"total_deduction_rub": "пятьдесят тысяч", "salary_rub": "сто тысяч"}
+    report = A.audit_document(
+        {"finances": finances},
+        doc_type="salary_deductions",
+        raw_ocr_text="итог удержания пятьдесят тысяч при доходе сто тысяч",
+    )
+    assert "TK138_CEILING_EXCEEDED" in _codes(report)
+    assert report.details["tk138_checked"] is True
+    assert report.details["tk138_verified_ok"] is False
+
+
+# =========================================================================
+# P4.2: УПД — ИНН грузоотправителя/грузополучателя под контролем
+# =========================================================================
+def test_p4_upd_declares_shipper_and_consignee():
+    spec = resolve_spec("invoices_upd")
+    party_paths = {p["path"] for p in spec.parties}
+    assert {"shipper", "consignee"} <= party_paths
+    gate_paths = {g["path"] for g in spec.gate_fields}
+    assert {"shipper.inn", "consignee.inn"} <= gate_paths
+
+
+def test_p4_upd_shipper_invalid_inn_is_audited():
+    """Битая контрольная сумма ИНН грузоотправителя даёт INVALID_INN."""
+    report = A.audit_document(
+        {"shipper": {"inn": "7707083890", "name": "ООО «Груз»"}},
+        doc_type="invoices_upd",
+        raw_ocr_text="УПД № 5. Грузоотправитель: ООО «Груз», ИНН 7707083890.",
+    )
+    assert "INVALID_INN" in _codes(report)
+
+
+def test_p4_upd_shipper_hallucinated_inn_is_gated():
+    """Валидный по контрольной сумме, но отсутствующий в тексте ИНН ловит гейт."""
+    report = A.audit_document(
+        {"shipper": {"inn": "7707083893", "name": "ООО «Груз»"}},
+        doc_type="invoices_upd",
+        raw_ocr_text="Универсальный передаточный документ № 5. Грузоотправитель: ООО «Груз», ИНН в документе не указан.",
+    )
+    assert "HALLUCINATION_RISK" in _codes(report)
+
+
+def test_p4_upd_shipper_inn_confirmed_by_text_passes():
+    report = A.audit_document(
+        {"shipper": {"inn": "7707083893", "name": "ООО «Груз»"}},
+        doc_type="invoices_upd",
+        raw_ocr_text="Грузоотправитель: ООО «Груз», ИНН 7707083893",
+    )
+    assert "HALLUCINATION_RISK" not in _codes(report)
+    assert "INVALID_INN" not in _codes(report)
+
+
+# =========================================================================
+# P4.6: ущерб от преступления — четвёртый случай 70% по ст. 99 ч. 2 229-ФЗ
+# =========================================================================
+def test_p4_crime_damage_basis_allows_up_to_70():
+    has_alimony, has_harm = split_deduction_basis(
+        "возмещение ущерба, причинённого преступлением"
+    )
+    assert has_alimony is True
+    assert has_harm is False
+    ok, _ = verify_deduction_percentage("65%", has_alimony=has_alimony, has_harm=has_harm)
+    assert ok is True
+
+
+def test_p4_65_percent_without_any_basis_still_fails():
+    ok, _ = verify_deduction_percentage("65%", has_alimony=False, has_harm=False)
+    assert ok is False
 
 
 # =========================================================================

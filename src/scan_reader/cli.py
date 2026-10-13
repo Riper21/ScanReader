@@ -409,7 +409,13 @@ def handle_benchmark(args: argparse.Namespace) -> int:
             try:
                 with open(gt_path, "r", encoding="utf-8") as f:
                     gt_items = json.load(f)
-            except Exception:
+            except Exception as e:
+                # P4.5 (Правила 1+8): причина деградации метрик категории
+                # логируется, а не глотается молча.
+                _cli_logger.warning(
+                    f"Ground truth '{gt_path}' не прочитан — метрики категории "
+                    f"'{cat_id}' будут not_measured: {e}"
+                )
                 gt_items = None
 
         pred_items = results_map.get(cat_id, [])

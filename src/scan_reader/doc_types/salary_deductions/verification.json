@@ -37,6 +37,8 @@
   "deduction_limit": {
     "path": "finances.deduction_percentage|deduction_percentage",
     "basis_fields": ["claim_subject"],
+    "amount_paths": ["finances.total_deduction_rub|finances.total_rub"],
+    "income_paths": ["finances.salary_rub"],
     "severity": "error"
   },
   "chronology_rules": [

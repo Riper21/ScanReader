@@ -147,12 +147,18 @@ class VerificationSpec:
             })
 
         # Проверка процента удержания по ст. 99 229-ФЗ.
+        # P4.1: amount_paths/income_paths — база лимита ст. 138 ТК РФ
+        # (удержание ≤ 20% ОБЩЕГО месячного заработка). Словарь путей
+        # интерпретатора: конкретные поля задаёт плагин. Пустые списки —
+        # правило ТК-138 не заявлено, аудитор его не применяет.
         self.deduction_limit: Optional[Dict[str, Any]] = None
         limit = raw.get("deduction_limit")
         if isinstance(limit, dict) and _as_paths(limit.get("path")):
             self.deduction_limit = {
                 "path": _as_paths(limit.get("path"))[0],
                 "basis_fields": _as_paths(limit.get("basis_fields")),
+                "amount_paths": _as_paths(limit.get("amount_paths")),
+                "income_paths": _as_paths(limit.get("income_paths")),
                 "severity": str(limit.get("severity", "error")).lower(),
             }
 
@@ -303,6 +309,8 @@ class VerificationSpec:
         if self.deduction_limit:
             paths.append(self.deduction_limit["path"])
             paths.extend(self.deduction_limit["basis_fields"])
+            paths.extend(self.deduction_limit.get("amount_paths", []))
+            paths.extend(self.deduction_limit.get("income_paths", []))
         for rule in self.chronology_rules:
             paths.extend(rule["before"])
             paths.extend(rule["after"])

@@ -242,9 +242,13 @@ def run_benchmark_suite(facade: LegalDocPlatformFacade):
     benchmark_report["ground_truth_schema_integrity_percent"] = schema_avg
 
     # Сохранение отчета в JSON
+    # P4.4: Правило 5 — артефакт пишется атомарно (временный файл + fsync +
+    # замена). Прежний open("w") при сбое питания/процесса посреди записи
+    # оставлял битый полупустой отчёт бенчмарка.
+    from .core.io_utils import write_atomic
+
     bench_out = os.path.join(facade.results_dir, "benchmark_metrics_summary.json")
-    with open(bench_out, "w", encoding="utf-8") as f:
-        json.dump(benchmark_report, f, ensure_ascii=False, indent=2)
+    write_atomic(bench_out, json.dumps(benchmark_report, ensure_ascii=False, indent=2))
 
     print("\n" + "=" * 70)
     if extraction_scores:
