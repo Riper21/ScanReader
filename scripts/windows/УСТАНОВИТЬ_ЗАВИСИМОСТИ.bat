@@ -5,7 +5,7 @@ title Install Dependencies - Legal Document Platform (ScanReader)
 cd /d "%~dp0..\.."
 
 echo ==============================================================================
-echo  [УСТАНОВКА] Проверка и установка библиотек Python для AI-системы (ScanReader 0.8.0)
+echo  [УСТАНОВКА] Проверка и установка библиотек Python для AI-системы (ScanReader 0.9.5)
 echo ==============================================================================
 echo.
 
@@ -52,7 +52,7 @@ if %ERRORLEVEL% neq 0 (
 
 echo.
 echo • Шаг 3/3: Верификация установленных модулей...
-%PY_CMD% -c "import pydantic, openai, fitz, PIL, openpyxl, pandas, docx, docx2txt, pypdf, httpx, dotenv; print('   [OK] Все ключевые модули успешно загружены!')"
+%PY_CMD% -c "import pydantic, openai, fitz, PIL, openpyxl, docx, docx2txt, dotenv; print('   [OK] Все ключевые модули успешно загружены!')"
 if %ERRORLEVEL% neq 0 (
     echo [ВНИМАНИЕ] Некоторые модули не прошли тест импорта.
 ) else (

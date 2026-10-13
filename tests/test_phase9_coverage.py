@@ -27,17 +27,19 @@ from scan_reader.type_registry import get_registry
 # enforcement_orders/schema.py — 0 % покрытия
 # =========================================================================
 def test_enforcement_order_schema_module_is_importable():
-    """Модуль схемы не импортировался ни одним тестом: целый файл в 0 %."""
-    import importlib.util
+    """Модуль схемы не импортировался ни одним тестом: целый файл в 0 %.
 
-    path = (
-        Path(__file__).resolve().parent.parent
-        / "src" / "scan_reader" / "doc_types" / "enforcement_orders" / "schema.py"
-    )
-    spec = importlib.util.spec_from_file_location("probe_eo_schema", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    assert hasattr(module, "EnforcementOrderDoc")
+    P3.4: раньше проба делала exec_module под синтетическим именем без
+    регистрации в sys.modules — coverage.py после такого «первого
+    контакта» с файлом отказывался трассировать его до конца запуска,
+    и все тесты реестра проходили впустую. Нормальный импорт честен
+    и к покрытию, и к семантике (реестр регистрирует модуль под тем же
+    именем — класс один на процесс).
+    """
+    from scan_reader.doc_types.enforcement_orders.schema import EnforcementOrderDoc
+
+    assert EnforcementOrderDoc.__name__ == "EnforcementOrderDoc"
+    assert EnforcementOrderDoc.__test__ is False
 
 
 def test_enforcement_order_schema_builds_from_minimal_payload():

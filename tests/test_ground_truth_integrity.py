@@ -6,9 +6,15 @@
 эталоне делает измерение бессмысленным: система «штрафуется» за несуществующую
 ошибку. Ранее в data/ground_truth/hr_orders.json физическому лицу был присвоен
 10-значный ИНН юридического лица.
+
+P3.4: реквизиты, вписанные в ТЕКСТОВЫЕ поля эталонов (формат «ИНН N» в
+details/summary), — тот же эталон: невалидный ИНН там наказывает систему
+за несуществующую ошибку (пример — 7708123456 в enforcement_orders.json,
+исправлен на контрольный разряд 7708123450).
 """
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -20,6 +26,15 @@ REPO = Path(__file__).resolve().parent.parent
 GT_DIR = REPO / "data" / "ground_truth"
 
 GT_FILES = sorted(GT_DIR.glob("*.json")) if GT_DIR.is_dir() else []
+
+#: Реквизиты внутри текстовых полей: «ИНН 7708123450», «СНИЛС 112-233-445 95»,
+#: «БИК 044583222». Прочие числа (р/с, телефоны) не трогаем: рядом не всегда
+#: есть БИК для сверки ключа счёта — ложных срабатываний будет больше пользы.
+_TEXT_IDENTIFIER_PATTERNS = {
+    "inn": re.compile(r"(?:ИНН|INN)[^\d]{0,3}(\d{10}(?:\d{2})?)(?!\d)"),
+    "snils": re.compile(r"СНИЛС[^\d]{0,3}(\d{3}[- ]?\d{3}[- ]?\d{3}[- ]\d{2})(?!\d)"),
+    "bik": re.compile(r"БИК[^\d]{0,3}(\d{9})(?!\d)"),
+}
 
 
 def _walk_inn_fields(node, path=""):
@@ -73,6 +88,42 @@ def test_ground_truth_biks_are_valid(path):
 
     _walk(payload)
     assert not problems, f"невалидные БИК в эталоне {path.name}: {problems}"
+
+
+def _walk_strings(node, path=""):
+    """Собирает пары (путь, текст) из всех строковых полей эталона."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            child = f"{path}.{key}" if path else str(key)
+            if isinstance(value, str) and value.strip():
+                yield child, value
+            else:
+                yield from _walk_strings(value, child)
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            yield from _walk_strings(value, f"{path}[{index}]")
+
+
+@pytest.mark.skipif(not GT_FILES, reason="каталог эталонов отсутствует")
+@pytest.mark.parametrize("path", GT_FILES, ids=lambda p: p.name)
+def test_ground_truth_identifiers_in_text_fields_are_valid(path):
+    """P3.4: «ИНН 7708123456» в details — эталон наравне с полем ``inn``.
+
+    Поймал реальный дефект: в enforcement_orders.json (заявление о возбуждении
+    ИП, должник-юрлицо) ИНН в тексте реквизитов не проходил контрольную сумму,
+    а существующий сканер по ключам полей его не видел.
+    """
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    checkers = {"inn": validate_inn, "snils": validate_snils, "bik": validate_bik}
+    problems = []
+    for where, text in _walk_strings(payload):
+        for kind, rx in _TEXT_IDENTIFIER_PATTERNS.items():
+            for match in rx.finditer(text):
+                raw = match.group(1)
+                ok, msg = checkers[kind](re.sub(r"\D", "", raw))
+                if not ok:
+                    problems.append(f"{where}: «{match.group(0)}» -> {msg}")
+    assert not problems, f"невалидные реквизиты в текстах {path.name}: {problems}"
 
 
 def test_every_enabled_plugin_has_ground_truth():

@@ -3,7 +3,7 @@ import re
 from typing import Optional, Any
 from pydantic import BaseModel, Field, field_validator
 from scan_reader.core.finance_parser import parse_russian_currency
-from scan_reader.core.fields import INN_PATTERN, ValidatedPartyMixin, digits_only
+from scan_reader.core.fields import INN_PATTERN, SNILS_PATTERN, ValidatedPartyMixin, digits_only
 from scan_reader.core.utils import coerce_to_str
 
 
@@ -31,6 +31,10 @@ class HrEmployeeInfo(ValidatedPartyMixin):
     def _check_snils(cls, v: str) -> str:
         if not v.strip():
             return v
+        # P3.1: форма (только цифры/пробелы/дефисы) — по SNILS_PATTERN из
+        # core.fields, затем счёт цифр. Буквы в СНИЛС — ошибка формы.
+        if not re.match(SNILS_PATTERN, v.strip()):
+            raise ValueError(f"СНИЛС может содержать только цифры, пробелы и дефисы, получено: {v!r}")
         cleaned = digits_only(v)
         if cleaned is None or len(cleaned) != 11:
             raise ValueError(f"СНИЛС должен содержать 11 цифр, получено: {v!r}")

@@ -707,6 +707,52 @@ def test_launcher_run_benchmark_suite_creates_report(tmp_path, monkeypatch, caps
     assert "ИТОГОВАЯ ТОЧНОСТЬ ИЗВЛЕЧЕНИЯ: н/д" in out
 
 
+def test_launcher_banner_prints_version(capsys):
+    """P3.4: баннер печатается без интерактива и содержит версию пакета."""
+    import scan_reader
+    from scan_reader import launcher
+
+    launcher.print_banner()
+    out = capsys.readouterr().out
+    assert scan_reader.__version__ in out
+    assert "SCANREADER" in out
+
+
+def test_launcher_open_results_in_explorer_win32(monkeypatch, tmp_path):
+    """P3.4: на Windows открытие папки результатов идёт через os.startfile."""
+    from scan_reader import launcher
+
+    calls = []
+    monkeypatch.setattr(launcher.os, "startfile", lambda p: calls.append(p), raising=False)
+    monkeypatch.setattr(launcher.sys, "platform", "win32")
+    launcher.open_results_in_explorer(str(tmp_path))
+    assert calls == [str(tmp_path)]
+
+
+def test_launcher_open_results_in_explorer_failure_is_logged(monkeypatch, tmp_path):
+    """P3.4: сбой открытия Проводника не молчит и не роняет пакет (Правило 1)."""
+    from scan_reader import launcher
+
+    def boom(_p):
+        raise OSError("нет оболочки")
+
+    monkeypatch.setattr(launcher.os, "startfile", boom, raising=False)
+    monkeypatch.setattr(launcher.sys, "platform", "win32")
+    launcher.open_results_in_explorer(str(tmp_path))  # не должно бросить
+
+
+def test_launcher_resolve_input_root_falls_back_to_local_dirs(monkeypatch, tmp_path):
+    """P3.4: без env каталог входящих ищется в cwd (включая кириллическое имя)."""
+    import os as _os
+    from scan_reader import launcher
+
+    monkeypatch.delenv("SCANREADER_INCOMING_DIR", raising=False)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "Входящие_документы").mkdir()
+    expected = _os.path.join(str(tmp_path), "Входящие_документы")
+    assert launcher._resolve_input_root() == expected
+
+
 class _NullFacade:
     def __init__(self, tmp_path):
         from scan_reader.type_registry import get_registry as _gr

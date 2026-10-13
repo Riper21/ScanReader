@@ -66,6 +66,19 @@ ScanReader features a plug-and-play plugin architecture (`TypeRegistry`) providi
 pip install .
 ```
 
+### Editable install (development)
+
+If you work on the sources, install the package **from this repository in editable mode** so the `scan-reader` / `scanreader` commands and the MCP stdio server execute this checkout instead of some other copy on the machine:
+
+```bash
+py -3 -m pip uninstall scan-reader -y   # remove any stale editable installs first
+py -3 -m pip install -e .
+py -3 -c "import scan_reader; print(scan_reader.__file__)"   # must point into this repo
+scan-reader --version
+```
+
+Stale editable installs pointing at another folder are the most common cause of "the CLI runs old code" issues — always verify `scan_reader.__file__` after reinstalling.
+
 ### OCR (recommended for scans)
 
 Without an OCR engine the cross-modal gate for **scans** falls back to a transcription produced by the same model that performed the extraction. That is not an independent check — recognition errors cannot be told apart from extraction errors — and the report marks it as such.

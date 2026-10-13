@@ -64,7 +64,7 @@ field names; the salary-specific flat-1C builder moves into its plugin.
 
 ### Tests
 
-788 tests (was 715): the plugin-isolation scanner now scans the facade,
+802 tests (was 715): the plugin-isolation scanner now scans the facade,
 guardrails, exporter and auditor for forbidden field-name tokens with
 an interpreter vocabulary exemption; flat-1C column declarations are
 schema-validated per plugin; recovery declarations and their sources
@@ -76,7 +76,65 @@ marker documents, 6 negative generic-word cases and router confirmation;
 `_safe_parse_json` handles multi-block, array, NaN and multi-object
 replies; the token tracker survives deque eviction; the rate limiter
 rejects nested `with`; a short gate reference yields
-`GATE_REFERENCE_TOO_SHORT` instead of a silent pass.
+`GATE_REFERENCE_TOO_SHORT` instead of a silent pass; the ground-truth
+integrity scanner validates identifiers inside text fields (format
+«ИНН N» — it caught an invalid checksum in the enforcement-order
+reference set); an AST scanner forbids silent `except: pass` handlers
+across the package (Rule 1); launcher smoke tests cover the banner,
+explorer-open failure logging and input-root resolution.
+
+Hygiene (phase P3 of the multi-agent audit): dead code removal,
+dependency and environment cleanup, honest coverage measurement.
+
+### Fixed
+
+- The ground-truth set `enforcement_orders.json` (doc #4, debtor legal
+  entity) carried INN 7708123456 which fails the FNS checksum — the
+  system would be fined for a non-existent error. Replaced with the
+  correct check digit 7708123450; the integrity scanner now also parses
+  identifiers out of text fields, so such defects cannot return quietly.
+- Seven silent `except: pass` handlers (facade PDF close, cache `__del__`,
+  atomic-write temp cleanup, OCR backend probing, percentage parser
+  fallbacks) now log and keep the documented behaviour — the forbidden
+  pattern is enforced by an AST scanner test (Rule 1, zero silent
+  failures).
+- Coverage measurement understated the real suite: plugin schema modules
+  loaded by the registry via `spec_from_file_location` were invisible to
+  coverage.py when not registered in `sys.modules` (nine `doc_types`
+  files showed 0 %). The registry now registers each plugin module under
+  its real package name with pop-before-set (reload replaces the entry
+  instead of accumulating it — the phase 7.9 no-leak invariant is kept
+  and pinned by the updated test); honest total coverage rose from
+  71.2 % to 77.0 %, and `fail_under` is raised to 75 (Rule 8: an
+  understated measurement is as dishonest as an inflated one).
+
+### Removed
+
+- Dead code: `money_field`, `FORMAT_KINDS` and `first_present`
+  (`verifier/spec.py`), `OPTIONAL_PLUGIN_FILES` and the
+  `registry_json_name` property (`type_registry.py`), the `backend_name`
+  property (`core/ocr.py`), a dead return after try/except and a local
+  `import re as _re` (`verifier/auditor.py`); unused patterns
+  `ACCOUNT_PATTERN`, `PERCENT_PATTERN`, `IP_NUMBER_PATTERN`,
+  `DATE_PATTERN` in `core/fields.py` (live ones wired up instead:
+  `SNILS_PATTERN` now guards the SNILS form in `hr_orders` and
+  `powers_of_attorney` schemas).
+- `pandas` and `httpx` from the declared dependencies (zero direct
+  imports in the package); `requirements.txt` is now a mirror of
+  `pyproject.toml` (single source of truth), the Windows install script
+  no longer probes for them, and `core.diagnostics` reports only the
+  genuinely optional `docx` extra.
+
+### Changed
+
+- Package version aligned to 0.9.5 across `pyproject.toml`,
+  `__init__.py`, `requirements.txt`, the Windows install script and the
+  user guide; `mypy` targets Python 3.9 (the declared minimum);
+  `pyproject` no longer lists an unused pandas in the stack docs.
+- The development environment installs the package editable from this
+  repository (`pip install -e . --no-deps`); the previous install
+  pointed at a different copy of the project (0.8.0), so tests could
+  import foreign code. README documents the editable-install check.
 
 ## [0.9.5] - 2026-10-13
 

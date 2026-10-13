@@ -454,11 +454,27 @@ def test_dual_zone_inputs_checks_existence_before_pillow(monkeypatch, tmp_path):
 def test_registry_reload_does_not_leak_modules():
     from scan_reader.type_registry import get_registry
 
-    before = {m for m in sys.modules if m.startswith("doc_types_")}
+    # P3.4: модули плагинов регистрируются под пакетными именами
+    # (scan_reader.doc_types.<id>.schema / .flat_1c) — префикс старой
+    # проверки doc_types_ их больше не видел. Инвариант прежний: reload
+    # замещает записи, а не накапливает (pop-before-set в type_registry).
+    def _plugin_modules():
+        return {
+            m
+            for m in sys.modules
+            if m.startswith("scan_reader.doc_types.")
+            and (m.endswith(".schema") or m.endswith(".flat_1c"))
+        }
+
+    before = _plugin_modules()
     for _ in range(5):
         get_registry(force_reload=True)
-    after = {m for m in sys.modules if m.startswith("doc_types_")}
+    after = _plugin_modules()
     assert after == before, f"утечка модулей: {after - before}"
+    # Каждая запись — ровно одна на плагин, без дублей под старыми
+    # синтетическими именами вида doc_types_<id>_schema.
+    stale = [m for m in sys.modules if m.startswith("doc_types_")]
+    assert not stale, f"остатки старой схемы имён: {stale}"
 
 
 # =========================================================================

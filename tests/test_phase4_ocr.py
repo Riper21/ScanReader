@@ -271,7 +271,7 @@ def test_missing_ocr_does_not_make_doctor_report_error():
 def test_ocr_dependency_is_not_part_of_missing_optional():
     """Иначе doctor всегда показывал бы warning независимо от установки."""
     report = diag.run_diagnostics(check_vlm=False, verbose=False)
-    optional = ("pandas", "docx")
+    optional = ("docx",)
     for dep in optional:
         assert dep in report["dependencies"]
 

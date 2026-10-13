@@ -140,16 +140,16 @@ def parse_percentage_value(percent_str: str) -> Optional[float]:
     if match:
         try:
             return float(match.group(1))
-        except ValueError:
-            pass
+        except ValueError as e:
+            logger.debug(f"Не удалось разобрать «{match.group(0)}» как процент: {e}")
 
     # «N ая/ой/ый часть»
     match = re.search(r"(\d+)\s*(?:ая|ой|ый)\s+часть", s)
     if match:
         try:
             return float(match.group(1))
-        except ValueError:
-            pass
+        except ValueError as e:
+            logger.debug(f"Не удалось разобрать «{match.group(0)}» как часть: {e}")
 
     # Дробная доля: N/D, где D <= 12 и N <= D (отсекает номера ИП вида 10701/16/3001)
     frac = re.search(r"\b(\d{1,2})\s*/\s*(\d{1,2})(?!\d)", s)

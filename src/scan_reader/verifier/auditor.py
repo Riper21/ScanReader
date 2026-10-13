@@ -126,9 +126,6 @@ def _to_number(val: Any) -> Optional[float]:
         return None
 
 
-        return
-
-
 class ZeroTrustAuditor:
     """
     Independent Zero-Trust Verification Engine.
@@ -399,9 +396,7 @@ class ZeroTrustAuditor:
             for free_path in spec.freeform_bank_fields:
                 blob = get_nested_value(data, free_path)
                 if isinstance(blob, str):
-                    import re as _re
-
-                    match = _re.search(r"\b0[14]\d{7}\b", blob)
+                    match = re.search(r"\b0[14]\d{7}\b", blob)
                     if match:
                         bik_value = match.group(0)
                         break

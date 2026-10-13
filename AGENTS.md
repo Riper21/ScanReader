@@ -1,7 +1,7 @@
 # 🤖 AGENTS.md: Инструкции и Архитектурные Правила (ScanReader Modernized)
 
 > **Назначение файла:** Главное руководство, свод архитектурных правил, инвариантов и протоколов разработки для AI-ассистентов в проекте распознавания судебных и исполнительных документов ScanReader.
-> **Базовый стек:** Python 3.9+, Pydantic v2, OpenAI API / Ollama / vLLM (Qwen2.5-VL), Pillow, PyMuPDF, openpyxl, pandas, pytest.
+> **Базовый стек:** Python 3.9+, Pydantic v2, OpenAI API / Ollama / vLLM (Qwen2.5-VL), Pillow, PyMuPDF, openpyxl, pytest.
 > **Основной пакет:** `src/scan_reader/` (структура PEP 517/621, единый источник правды).
 > **Контур безопасности:** Закрытый корпоративный периметр. Локальный кэш без утечек памяти и секретов.
 

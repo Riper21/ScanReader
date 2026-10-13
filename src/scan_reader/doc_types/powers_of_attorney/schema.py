@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
+import re
 from typing import Any
 from pydantic import BaseModel, Field, field_validator
-from scan_reader.core.fields import ValidatedPartyMixin, digits_only
+from scan_reader.core.fields import SNILS_PATTERN, ValidatedPartyMixin, digits_only
 from scan_reader.core.utils import coerce_to_str
 
 
@@ -35,11 +36,14 @@ class AttorneyAgentInfo(ValidatedPartyMixin):
 
     # P1.9: Rule 6 — СНИЛС содержит 11 цифр; «не может быть значением поля»
     # отвергается схемой, пустое значение пропускается.
+    # P3.1: форма (цифры/пробелы/дефисы) — по SNILS_PATTERN из core.fields.
     @field_validator("snils", mode="after")
     @classmethod
     def _check_snils(cls, v: str) -> str:
         if not v.strip():
             return v
+        if not re.match(SNILS_PATTERN, v.strip()):
+            raise ValueError(f"СНИЛС может содержать только цифры, пробелы и дефисы, получено: {v!r}")
         cleaned = digits_only(v)
         if cleaned is None or len(cleaned) != 11:
             raise ValueError(f"СНИЛС должен содержать 11 цифр, получено: {v!r}")

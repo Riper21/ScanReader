@@ -271,8 +271,8 @@ class LegalDocPlatformFacade:
                     if doc is not None:
                         try:
                             doc.close()
-                        except Exception:
-                            pass
+                        except Exception as close_err:
+                            logger.debug(f"Не удалось закрыть PDF '{file_path}': {close_err}")
         except Exception:
             return None
         return None

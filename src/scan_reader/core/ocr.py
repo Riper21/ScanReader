@@ -75,14 +75,16 @@ class OcrEngine:
             import rapidocr_onnxruntime  # noqa: F401
 
             return "rapidocr", None
-        except ImportError:
-            pass
+        except ImportError as e:
+            # Итог проб отражается в возвращаемой ошибке ниже (Правило 1:
+            # сбой не молчит — он уходит в лог и в возвращаемую структуру).
+            logger.debug(f"Бэкенд rapidocr недоступен: {e}")
         try:
             import paddleocr  # noqa: F401
 
             return "paddleocr", None
-        except ImportError:
-            pass
+        except ImportError as e:
+            logger.debug(f"Бэкенд paddleocr недоступен: {e}")
         return None, (
             "OCR-движок не установлен. Установите дополнительный пакет: "
             'pip install "scan-reader[ocr]" (быстрый CPU-вариант) '
@@ -95,13 +97,6 @@ class OcrEngine:
             return True
         name, _err = self._detect_backend()
         return name is not None
-
-    def backend_name(self) -> Optional[str]:
-        """Имя активного бэкенда (или доступного, если модель ещё не поднята)."""
-        if self._impl_name:
-            return self._impl_name
-        name, _err = self._detect_backend()
-        return name
 
     def diagnostics(self) -> dict:
         """Состояние OCR для раздела doctor."""

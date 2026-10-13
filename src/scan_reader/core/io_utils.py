@@ -96,7 +96,8 @@ def write_atomic(
             try:
                 temp_path.unlink()
             except FileNotFoundError:
-                pass
+                # os.replace уже забрал файл; отсутствие ожидаемо, но не молчим.
+                _io_logger.debug(f"Временный файл '{temp_path}' уже перемещён/удалён")
             except OSError as e:
                 _io_logger.debug(f"Не удалось удалить временный файл '{temp_path}': {e}")
 

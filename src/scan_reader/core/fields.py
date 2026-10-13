@@ -42,14 +42,6 @@ OGRN_PATTERN = r"^\d{13}$"
 OGRNIP_PATTERN = r"^\d{15}$"
 #: БИК: 9 цифр, начинается с 04 (банк/ГРКЦ) либо 01 (казначейство/УФК).
 BIK_PATTERN = r"^0[14]\d{7}$"
-#: Банковский счёт: 20 цифр, возможны пробелы и дефисы.
-ACCOUNT_PATTERN = r"^[\d\- ]{17,26}$"
-#: Процент удержания: число 0..100 с необязательным знаком %.
-PERCENT_PATTERN = r"^(?:\d{1,2}|100)(?:[.,]\d{1,2})?\s*%?$"
-#: Номер исполнительного производства: NNNNN/ГГ/ДД/РЕГИОН-ИП (регион опционален).
-IP_NUMBER_PATTERN = r"^\d{5}/\d{2}/\d{2}(?:\d{5})?[-–]?ИП?\.?$"
-#: Дата в форматах, встречающихся в российских документах.
-DATE_PATTERN = r"^(\d{1,2}[.\-/]\d{1,2}[.\-/]\d{2,4}|\d{4}-\d{2}-\d{2}|\d{1,2}\s+\S+\s+\d{4})$"
 
 
 def empty_str_to_none(v: Any) -> Any:
@@ -176,11 +168,6 @@ class ValidatedBankMixin(BaseModel):
                     msg,
                 )
         return self
-
-
-def money_field(description: str) -> Any:
-    """Денежное поле: неотрицательное число. Отрицательная сумма — ошибка формы."""
-    return Field(default=None, ge=0, description=description)
 
 
 def percent_field(description: str) -> Any:

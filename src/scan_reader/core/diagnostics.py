@@ -139,7 +139,9 @@ def run_diagnostics(verbose: bool = False, check_vlm: bool = True) -> Dict[str, 
     }
 
     core_deps = ("pydantic", "openai", "PIL", "fitz", "openpyxl", "dotenv")
-    optional_deps = ("pandas", "docx")
+    # P3.2: pandas исключён из зависимостей (0 импортов); docx остаётся
+    # в optional, потому что конвейер DOCX деградирует мягко.
+    optional_deps = ("docx",)
     # OCR-движки отмечаются отдельно и НЕ влияют на статус: отсутствие
     # независимого OCR снижает качество сверки, но не делает конфигурацию
     # неработоспособной — проект полностью функционален без него.

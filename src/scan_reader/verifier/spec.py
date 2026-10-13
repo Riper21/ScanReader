@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import os
 import typing
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from ..core.utils import get_logger
 
@@ -28,9 +28,6 @@ VERIFICATION_FILENAME = "verification.json"
 
 #: Виды проверки идентификатора. Соответствуют функциям verifier.checksums.
 IDENTIFIER_KINDS = frozenset({"inn", "snils", "ogrn", "ogrnip", "bik", "bank_account"})
-
-#: Виды структурной (несверяемой контрольной суммой) проверки реквизита.
-FORMAT_KINDS = frozenset({"kpp", "oktmo", "uin_rosp", "doc_ref_number"})
 
 #: Роли банковского блока. Это словарь ИНТЕРПРЕТАТОРА, а не поля документа:
 #: конкретные пути задаёт плагин (payment_details.bik, bank_requisites.account и т.п.).
@@ -525,13 +522,5 @@ def set_nested_value(data: Any, path: str, value: Any) -> None:
             nxt = {}
             curr[part] = nxt
         curr = nxt
-    curr[parts[-1]] = value
+        curr[parts[-1]] = value
 
-
-def first_present(data: Any, paths: Sequence[str]) -> Tuple[Any, Optional[str]]:
-    """Возвращает первое непустое значение и путь, по которому оно найдено."""
-    for path in paths:
-        value = get_nested_value(data, path)
-        if value is not None and str(value).strip() not in ("", "None", "null", "nan"):
-            return value, path
-    return None, None

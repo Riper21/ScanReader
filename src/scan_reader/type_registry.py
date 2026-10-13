@@ -59,7 +59,6 @@ REQUIRED_PLUGIN_FILES = (
 # него проходит только общие проверки, и это позволяет добавлять новый тип
 # документа простым созданием папки. P2.1: flat_1c.json — девятый, маппинг
 # колонок универсальной плоской записи 1С.
-OPTIONAL_PLUGIN_FILES = ("verification.json", "flat_1c.json")
 
 
 class PluginSpec:
@@ -270,19 +269,27 @@ class PluginSpec:
         """
         Загружает Pydantic-модель плагина из schema.py.
 
-        Фаза 7.9: модуль НЕ регистрируется в sys.modules. Раньше он оставался
-        там навсегда, и каждый get_registry(force_reload=True) добавлял новый
-        объект на каждый плагин, то есть память росла пропорционально числу
-        перезагрузок. Регистрация нужна была для разрешения внутренних ссылок
-        модуля, но это делает сам спецификатор загрузчика.
+        Фаза 7.9: модуль НЕ регистрировался в sys.modules, чтобы
+        get_registry(force_reload=True) не оставлял после каждого вызова
+        новый объект на каждый плагин. У этого была невидимая цена:
+        coverage.py сопоставляет исполняемые файлы с source-пакетом по
+        sys.modules, поэтому схемы плагинов не получали ни одной строки
+        покрытия — 9 файлов показывались как 0 %, занижая измерение
+        (Правило 8). P3.4: модуль регистрируется под настоящим «пакетным»
+        именем, а память защищена pop-before-set: перезагрузка замещает
+        запись, а не добавляет новую (см. test_registry_reload_does_not_leak_modules).
+        Побочный эффект — нормальный импорт и реестр делят один класс,
+        а не два разных объекта одной схемы.
         """
         schema_path = os.path.join(self.folder_path, "schema.py")
-        module_name = f"doc_types_{self.id}_schema"
+        module_name = f"scan_reader.doc_types.{self.id}.schema"
+        sys.modules.pop(module_name, None)
         spec = importlib.util.spec_from_file_location(module_name, schema_path)
         if spec is None or spec.loader is None:
             raise ValueError(f"Не удалось загрузить схему плагина '{self.folder_name}' из {schema_path}")
         module = importlib.util.module_from_spec(spec)
         try:
+            sys.modules[module_name] = module
             spec.loader.exec_module(module)
         except Exception:
             sys.modules.pop(module_name, None)
@@ -297,9 +304,9 @@ class PluginSpec:
         P2.1: загружает функцию-сборщик плоской 1С-записи из модуля плагина.
 
         Ссылка в manifest.json имеет вид «flat_1c.convert». Как и schema.py
-        (Фаза 7.9), модуль не регистрируется в sys.modules: реестр
-        перезагружается, а утечка ссылок на модули росла бы с каждой
-        перезагрузкой.
+        (P3.4), модуль регистрируется в sys.modules под пакетным именем с
+        pop-before-set: перезагрузка замещает запись, а не растёт с каждой
+        итерацией, и coverage.py видит строки модуля.
         """
         module_name, _, attr = ref.partition(".")
         if not module_name or not attr:
@@ -312,19 +319,22 @@ class PluginSpec:
             raise ValueError(
                 f"manifest.flat_1c_builder плагина '{self.folder_name}': нет файла {module_path}"
             )
-        spec = importlib.util.spec_from_file_location(f"doc_types_{self.id}_flat_1c", module_path)
+        full_name = f"scan_reader.doc_types.{self.id}.{module_name}"
+        sys.modules.pop(full_name, None)
+        spec = importlib.util.spec_from_file_location(full_name, module_path)
         if spec is None or spec.loader is None:
             raise ValueError(f"Не удалось загрузить {module_path}")
         module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        try:
+            sys.modules[full_name] = module
+            spec.loader.exec_module(module)
+        except Exception:
+            sys.modules.pop(full_name, None)
+            raise
         fn = getattr(module, attr, None)
         if not callable(fn):
             raise ValueError(f"{module_path} не содержит функцию '{attr}'")
         return fn
-
-    @property
-    def registry_json_name(self) -> str:
-        return f"{self.registry_base_name}.json"
 
 
 class _Registry:
