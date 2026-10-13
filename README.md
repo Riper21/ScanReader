@@ -1,6 +1,6 @@
-[English](README.md) | [Русский](README_RU.md)
+[English](README_EN.md) | [Русский](README.md)
 
-# ScanReader
+# ScanReader (AI-Система распознавания документов)
 
 [![CI](https://github.com/Riper21/ScanReader/actions/workflows/ci.yml/badge.svg)](https://github.com/Riper21/ScanReader/actions)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
@@ -8,155 +8,158 @@
 [![Code style: ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![Checked with mypy](https://www.mypy-lang.org/static/mypy_badge.svg)](https://mypy-lang.org/)
 
-**ScanReader** is a production-grade Python 3.9+ platform for multimodal document recognition, Fast-Path classification, Zero-Trust legal and financial verification, and automated 1C/Excel registry orchestration.
+**ScanReader** — это промышленная платформа на Python 3.9+ для мультимодального распознавания юридических документов, Fast-Path классификации, Zero-Trust аудита финансовых и регистрационных реквизитов, а также автоматизированной выгрузки в 1С:Предприятие и многостраничные Excel-реестры.
 
-It bridges the gap between raw document scans (court orders, writs of execution, salary deduction resolutions) and enterprise accounting systems (1C:Enterprise, ERP, relational data warehouses) with strict deterministic integrity guarantees.
+Платформа спроектирована для работы в закрытом корпоративном контуре с локальными VLM (Qwen2.5-VL через Ollama/vLLM) и внешними эндпоинтами OpenAI/DeepSeek с гарантией детерминированной проверки достоверности данных.
 
 ---
 
-## Key Guarantees & Features
+## Ключевые возможности и гарантии
 
-- **Fast-Path Visual Routing:** a three-stage cascade — path/filename rules, then text markers, and only if both miss a Dual-Zone Chain-of-Thought VLM pass. The model is *not* consulted when a rule already matched, which keeps routine batches deterministic and cheap.
-- **Zero-Trust Verification Engine:** deterministic audit of the extracted data, driven per document type by a `verification.json` declaration:
-  - Checksum validation for Russian legal identifiers: INN (10 & 12 digits), SNILS, OGRN/OGRNIP, BIK, and 20-digit bank accounts (ЦБ РФ key 565-П).
-  - Monetary reconciliation of components. A reconciliation only counts as a check when it compared **two or more numbers**; a single amount is reported as unchecked, not as verified.
-  - Statutory salary deduction limits: 50 % standard, up to 70 % with a child-support basis (Art. 99 229-ФЗ), and 20 % of total monthly income (Art. 138 ТК РФ). Compensation for harm to health is *not* subject to the 50 % cap (Federal Law 314-ФЗ) and has no percentage ceiling — the auditor does not claim one.
-  - Chronology of procedural acts.
-- **Cross-Modal Anti-Hallucination Gate:** corroborates extracted names, identifiers and amounts against a reference channel, and records where that channel came from (`gate_source`, `gate_independent`). With `pip install "scan-reader[ocr]"` the reference is an **independent** OCR pass; without it, transcription comes from the same model that performed the extraction, which is explicitly marked as *not* independent.
-- **Honest verification statuses:** `zero_trust_verified` means every applicable check passed. It is not a 100 % correctness claim, and the documentation states the boundary explicitly (see [ARCHITECTURE.md](ARCHITECTURE.md#2-verification-status-taxonomy)).
-- **Private JSON-RPC Stdio Server:** 5 tools for trusted in-perimeter integrations, with file access confined to `SCANREADER_ALLOWED_DIRS`. Not the official MCP protocol.
-- **Atomic File Operations:** prevents corrupted or partial writes using fsync and temporary replacement; registries are merged, never truncated.
-- **Dual Canonical JSON Output (Full & Flat):** generates `{stem}_Full.json` (hierarchical schema, Zero-Trust audit report, Guardrails, measurement caveats) and `{stem}_Flat.json` (flat single-level schema for 1C accounting import).
-- **Backward-compatible CLI:** drop-in replacement for existing 1C imports and batch runners, with deterministic exit codes.
+- **Fast-Path роутер:** трёхступенчатый каскад — правила по пути и имени файла, затем текстовые маркеры, и только если оба не сработали — двухзонный Chain-of-Thought проход VLM. Если правило сматчилось, модель **не вызывается**, что делает обычные пакеты детерминированными и дешёвыми.
+- **Zero-Trust Verification Engine:** детерминированный аудит извлечённых данных, управляемый для каждого типа документа декларацией `verification.json`:
+  - Алгоритмический расчёт контрольных разрядов РФ: ИНН (10 и 12 знаков), СНИЛС, ОГРН/ОГРНИП, БИК и 20-значные счета (ключ 565-П ЦБ РФ).
+  - Сверка составных сумм. **Сверкой считается только сравнение двух и более чисел**; единственное число фиксируется как непроверенное, а не как проверенное.
+  - Законодательные ограничения: 50 % стандартно, до 70 % при наличии основания по алиментам (ст. 99 229-ФЗ) и 20 % от общего месячного заработка (ст. 138 ТК РФ). Компенсация вреда здоровью лимиту 50 % **не подлежит** (ФЗ № 314-ФЗ), и отдельного процентного потолка для неё нет — аудитор не утверждает обратного.
+  - Контроль юридической хронологии процессуальных актов.
+- **Cross-Modal Антигаллюцинационный шлюз:** сопоставляет извлечённые реквизиты, суммы и наименования сторон с эталонным каналом и фиксирует его происхождение (`gate_source`, `gate_independent`). С `pip install "scan-reader[ocr]"` эталоном служит **независимый** проход OCR; без него транскрипцию даёт та же модель, что и извлечение, и это прямо помечается как **не** независимая проверка.
+- **Честные статусы верификации:** `zero_trust_verified` означает «все применимые проверки пройдены». Это не утверждение о стопроцентной правильности, и документация явно обозначает эту границу (см. [ARCHITECTURE_RU.md](ARCHITECTURE_RU.md)).
+- **JSON-RPC Stdio-сервер:** встроенный приватный JSON-RPC 2.0 сервер с 5 инструментами для доверенных интеграций внутри корпоративного контура; доступ к файлам ограничен `SCANREADER_ALLOWED_DIRS`. Это не официальный протокол MCP.
+- **Отказоустойчивый атомарный ввод-вывод:** запись файлов через временные буферы с `fsync` и атомарной заменой (защита от повреждения при сбоях питания); реестры дополняются, а не усекаются.
+- **Канонический двухфайловый формат JSON (Full & Flat):** сохранение полной иерархической модели `{stem}_Full.json` (аудит, Guardrails, оговорки измерения) и одноуровневого файла `{stem}_Flat.json` для прямой загрузки в 1С без вложенных структур.
+- **Обратная совместимость CLI:** поддержка существующих скриптов импорта в 1С и батников операторов с детерминированными кодами возврата.
 
-### Exit codes
+### Коды возврата
 
-| Code | Meaning |
+| Код | Значение |
 | :--- | :--- |
-| `0` | Processed; no blocking verification finding |
-| `1` | Processing error, or input file missing |
-| `2` | CLI usage error |
-| `3` | Discrepancy detected, or the cross-modal gate could not run — **human review required** |
-| `4` | Amounts were recovered by the heuristic regex scanner rather than read by the model |
+| `0` | Обработано, блокирующих замечаний верификации нет |
+| `1` | Ошибка обработки или входной файл не найден |
+| `2` | Ошибка аргументов CLI |
+| `3` | Обнаружено расхождение либо кросс-модальный гейт не выполнился — **требуется ручная проверка** |
+| `4` | Суммы восстановлены эвристическим regex-сканером, а не прочитаны моделью |
 
 ---
 
-## Supported Document Types (Universal Enterprise Matrix)
+## Поддерживаемые типы документов (Universal Enterprise Matrix)
 
-ScanReader features a plug-and-play plugin architecture (`TypeRegistry`) providing out-of-the-box support for 9 essential Russian document classes:
+ScanReader построен на расширяемой архитектуре плагинов (`TypeRegistry`), поддерживающей 9 ключевых категорий делопроизводства РФ «из коробки»:
 
-| Category | Plugin ID | Key Entities & Zero-Trust Checks | Export Targets |
+| Категория | Плагин (`ID`) | Ключевые сущности & Проверки Zero-Trust | Форматы выгрузки |
 | :--- | :--- | :--- | :--- |
-| **Commercial Contracts** | `commercial_contracts` | Counterparties, INN/KPP, OGRN, signatory powers, contract subject, total amount, VAT rates, duration dates. | 1C, Excel, Full JSON |
-| **Invoices & UPD** | `invoices_upd` | Status 1/2, Seller/Buyer, INN 10/12, line items, VAT rates (20%/10%/0%), subtotal/total math balance. | 1C:Trade/ERP, Excel, Full JSON |
-| **Acceptance Certificates** | `acceptance_certificates` | Customer, Contractor, underlying contract, reporting period, scope of services, total cost, claims-free clause. | 1C:Accounting, Excel, Full JSON |
-| **Powers of Attorney** | `powers_of_attorney` | Principal, Agent (passport details, SNILS), scope of powers, subdelegation right, notary certification, validity term. | 1C:HR/ERP, Excel, Full JSON |
-| **Legal Claims (Pre-Trial)** | `legal_claims` | Claimant, Debtor, contract basis, principal debt, penalties/late fees, Art. 395 CC interest, voluntary cure deadline. | Legal ERP, Excel, Full JSON |
-| **HR Orders** | `hr_orders` | Unified forms T-1, T-5, T-6, T-8, employee ID, structural department, base salary, hiring/firing dates, labor contract. | 1C:HR/Payroll, Excel, Full JSON |
-| **Enforcement Orders** | `enforcement_orders` | FSSP enforcement initiation orders & creditor applications, bailiff department, creditor/debtor data. | 1C, Excel, Full JSON |
-| **Writs of Execution** | `executive_documents` | Series FS/VS, arbitral and state court rulings, awarded debt sums, judgment operative provisions. | 1C, Excel, Full JSON |
-| **Salary Deductions** | `salary_deductions` | FSSP salary deduction resolutions, Art. 99 229-FZ, 50%/70% deduction caps, bank routing details. | 1C:Payroll, Excel, Full JSON |
+| **Договоры** | `commercial_contracts` | Стороны, ИНН/КПП, ОГРН, уставные полномочия подписантов, предмет, общая сумма, ставка НДС, сроки действия. | 1С, Excel, Full JSON |
+| **УПД и накладные** | `invoices_upd` | Статус 1/2, продавец/покупатель, ИНН 10/12, табличные товарные строки, ставки НДС 20%/10%/0%, суммы без НДС и с НДС. | 1С:УТ/ERP, Excel, Full JSON |
+| **Акты сдачи-приемки** | `acceptance_certificates` | Заказчик, исполнитель, договор-основание, период, перечень услуг/работ, общая стоимость, отметка об отсутствии претензий. | 1С:Бухгалтерия, Excel, Full JSON |
+| **Доверенности** | `powers_of_attorney` | Доверитель, представитель (паспортные данные, СНИЛС), объем полномочий, право передоверия, нотариальное удостоверение, срок. | 1С:ЗУП/ERP, Excel, Full JSON |
+| **Досудебные претензии** | `legal_claims` | Кредитор, должник, договор-основание, основной долг, неустойка/пени, расчет ст. 395 ГК РФ, дедлайн для добровольного ответа. | Юр. системы, Excel, Full JSON |
+| **Кадровые приказы** | `hr_orders` | Унифицированные формы Т-1, Т-5, Т-6, Т-8, табельный номер, подразделение, оклад/ставка, даты приема/увольнения, трудовой договор. | 1С:ЗУП, Excel, Full JSON |
+| **Приказы ИП** | `enforcement_orders` | Постановления и заявления о возбуждении ИП, отделы РОСП/УФССП, реквизиты взыскателя и должника. | 1С, Excel, Full JSON |
+| **Исполнительные листы** | `executive_documents` | Серии ФС/ВС, решения судов РФ, суммы присужденного взыскания, реквизиты арбитражных судов. | 1С, Excel, Full JSON |
+| **Взыскание на зарплату** | `salary_deductions` | Постановления ФССП по доходам должника, ст. 99 229-ФЗ, ограничение удержаний 50%/70%, банковские реквизиты. | 1С:ЗУП, Excel, Full JSON |
 
 ---
 
-## Installation
+## Установка
 
-### Base Installation
+### Базовая установка библиотеки
 ```bash
 pip install .
 ```
 
-### Editable install (development)
+### Editable-установка (разработка)
 
-If you work on the sources, install the package **from this repository in editable mode** so the `scan-reader` / `scanreader` commands and the MCP stdio server execute this checkout instead of some other copy on the machine:
+Если вы работаете с исходниками, ставьте пакет **editable из этого репозитория**, чтобы команды `scan-reader` / `scanreader` и JSON-RPC-сервер исполняли именно эту копию проекта, а не другую версию на машине:
 
 ```bash
-py -3 -m pip uninstall scan-reader -y   # remove any stale editable installs first
+py -3 -m pip uninstall scan-reader -y   # сначала уберите старые editable-установки
 py -3 -m pip install -e .
-py -3 -c "import scan_reader; print(scan_reader.__file__)"   # must point into this repo
+py -3 -c "import scan_reader; print(scan_reader.__file__)"   # должен указывать в этот репозиторий
 scan-reader --version
 ```
 
-Stale editable installs pointing at another folder are the most common cause of "the CLI runs old code" issues — always verify `scan_reader.__file__` after reinstalling.
+Устаревшая editable-установка, указывающая в другую папку, — самая частая причина жалоб «CLI запускает старый код»; после переустановки всегда проверяйте `scan_reader.__file__`.
 
-### OCR (recommended for scans)
+### OCR (рекомендуется для сканов)
 
-Without an OCR engine the cross-modal gate for **scans** falls back to a transcription produced by the same model that performed the extraction. That is not an independent check — recognition errors cannot be told apart from extraction errors — and the report marks it as such.
+Без OCR-движка кросс-модальный гейт для **сканов** опирается на транскрипцию той же
+модели, что и извлечение. Это **не** независимая проверка: ошибки распознавания
+неотличимы от ошибок извлечения, и отчёт это помечает
+(`gate_source=vlm_transcription`, предупреждение `GATE_REFERENCE_FROM_VLM`).
 
 ```bash
-# CPU, ~15 MB, same engine family as PaddleOCR
+# CPU, ~15 МБ, тот же движок, что и в PaddleOCR
 pip install ".[ocr]"
 
-# PaddleOCR with GPU support and broader language coverage
+# PaddleOCR с поддержкой GPU и широким языковым покрытием
 pip install ".[ocr-full]"
 ```
 
-After installation `scan-reader doctor` reports the active backend.
+После установки `scan-reader doctor` покажет активный бэкенд.
 
-### Development Tools
+### Установка инструментов разработки и тестирования
 ```bash
 pip install ".[dev]"
 ```
 
 ---
 
-## Command-Line Interface (CLI)
+## Использование в командной строке (CLI)
 
-The `scan-reader` CLI provides dedicated subcommands and supports machine-readable `--json` output:
+Консольный интерфейс `scan-reader` поддерживает модульные подкоманды и машиночитаемый флаг `--json`:
 
 ```bash
-# 1. Process document: return path to Flat JSON for 1C (default)
+# 1. Обработка документа: возврат пути к плоскому JSON для 1С (режим по умолчанию)
 scan-reader run "C:\Scans\order.pdf" --format flat
 
-# 2. Process document: return path to Full hierarchical JSON
+# 2. Обработка с возвратом полного иерархического JSON
 scan-reader run "C:\Scans\order.pdf" --format full
 
-# 3. Process document: return paths to both Full and Flat JSONs
+# 3. Обработка с возвратом путей к обоим файлам (Full и Flat)
 scan-reader run "C:\Scans\order.pdf" --format both
 
-# 4. Process with structured JSON output and Zero-Trust report
+# 4. Полная обработка со структурированным выводом JSON и Zero-Trust отчетом
 scan-reader run "C:\Scans\order.pdf" --json
 
-# 5. Fast-Path classification of header
+# 5. Быстрая Fast-Path классификация документа по шапке
 scan-reader classify "C:\Scans\order.pdf" --json
 
-# 6. Zero-Trust audit of an existing extracted JSON
+# 6. Независимый Zero-Trust аудит ранее извлеченного JSON-файла
 scan-reader verify "output\order_salary_deductions_Full.json" --json
 
-# 7. Consolidate processed documents into 1C and Excel registries
+# 7. Сборка сводных реестров 1С и многостраничного Excel
 scan-reader export "output" --format both
 
-# 8. Run diagnostic self-check (VLM, TTFT, GPU, dependencies)
+# 8. Самодиагностика платформы (VLM-модель, TTFT, токены, GPU, окружение)
 scan-reader doctor
 
-# 9. Start private JSON-RPC stdio server (5 tools)
+# 9. Запуск приватного JSON-RPC сервера (5 инструментов) по Stdio
 scan-reader mcp
 ```
 
-### Exit Codes
-- `0`: Processed; no blocking verification finding.
-- `1`: Processing error or input file missing.
-- `2`: CLI usage / argument syntax error.
-- `3`: Discrepancy detected, or the cross-modal gate could not run — human review required.
-- `4`: Amounts recovered by the heuristic regex scanner instead of read by the model.
+### Коды возврата (Exit Codes)
+- `0`: Обработано, блокирующих замечаний верификации нет.
+- `1`: Ошибка обработки или входной файл не найден.
+- `2`: Ошибка синтаксиса аргументов командной строки.
+- `3`: Обнаружены расхождения либо кросс-модальный гейт не выполнился — требуется ручная проверка.
+- `4`: Суммы восстановлены эвристическим regex-сканером, а не прочитаны моделью.
 
 ---
 
-## Python SDK API
+## Использование через Python API
 
 ```python
 from scan_reader import LegalDocPlatformFacade
 from scan_reader.verifier import ZeroTrustAuditor, VerificationStatus
 
-# Initialize platform facade
+# Инициализация фасада платформы
 facade = LegalDocPlatformFacade()
 
-# Process document through the full multimodal pipeline
+# Обработка документа через сквозной конвейер
 result = facade.process_single_document("scan.pdf")
-print("Document Type:", result["doc_type"])
-print("Quality Score:", result["quality_score_percent"])
+print("Тип документа:", result["doc_type"])
+print("Оценка качества:", result["quality_score_percent"])
 
-# Perform independent Zero-Trust audit
+# Запуск независимого Zero-Trust аудита
 report = ZeroTrustAuditor.audit_document(
     data=result["data"],
     doc_type=result["doc_type"],
@@ -164,37 +167,39 @@ report = ZeroTrustAuditor.audit_document(
 )
 
 if report.status == VerificationStatus.ZERO_TRUST_VERIFIED:
-    # «100 % verified» would be a false claim: this means every applicable
-    # deterministic check passed, which is a statement about the checks,
-    # not about the document being correct.
-    print("All applicable Zero-Trust checks passed")
-    print("  checksums verified:", report.details.get("checksums_verified_ok"))
-    print("  reconciliation run  :", report.details.get("math_verified_ok"))
-    print("  gate source        :", report.details.get("gate_source"))
+    # Формулировка «на 100%» была бы ложью: статус означает, что прошли
+    # применимые детерминированные проверки, то есть утверждение о проверках,
+    # а не о правильности документа.
+    print("Все применимые проверки Zero-Trust пройдены")
+    print("  контрольных сумм пройдено:", report.details.get("checksums_verified_ok"))
+    print("  сверка сумм выполнена :", report.details.get("math_verified_ok"))
+    print("  источник эталона      :", report.details.get("gate_source"))
 elif report.status == VerificationStatus.PARTIALLY_VERIFIED:
-    print("Only part of the checks could be applied - selective review needed")
+    print("Проверки выполнены частично — нужен выборочный контроль")
 elif report.status == VerificationStatus.GATE_NOT_EXECUTED:
-    print("Cross-modal gate did not run: requisites are unconfirmed")
+    print("Кросс-модальный гейт не выполнился: реквизиты не подтверждены")
 elif report.status == VerificationStatus.DISCREPANCY_DETECTED:
-    print("Discrepancy detected:", [issue.message for issue in report.issues])
+    print("Обнаружены расхождения:")
+    for issue in report.issues:
+        print(f"  • [{issue.code}] {issue.message}")
 ```
 
 ---
 
-## JSON-RPC Integration (Stdio)
+## JSON-RPC интеграция (Stdio)
 
-ScanReader exposes a **private line-delimited JSON-RPC 2.0 stdio server** with 5 tools
-(usage: `scan-reader mcp`). This is a private protocol — it is not compatible with the
-official MCP SDK (no Content-Length framing, no `initialize` handshake); use it for
-trusted in-perimeter integrations:
+ScanReader предоставляет **приватный строчно-ориентированный JSON-RPC 2.0 сервер** с 5 инструментами
+(запуск: `scan-reader mcp`). Протокол приватный: он **не совместим** с официальным MCP SDK
+(нет Content-Length framing и handshake `initialize`) и предназначен для доверенных интеграций
+внутри корпоративного контура. Доступ к файлам ограничен корнями из `SCANREADER_ALLOWED_DIRS`.
 
-1. `scan_document`: Full extraction and Zero-Trust audit (paths restricted by `SCANREADER_ALLOWED_DIRS`).
-2. `classify_document`: Fast-Path routing of document headers.
-3. `verify_legal_data`: Algorithmic audit of identifiers and arithmetic.
-4. `run_benchmark`: Evaluation against ground truth datasets.
-5. `export_results`: Consolidation into Excel and 1C registries.
+1. `scan_document`: полный цикл распознавания и Zero-Trust аудита.
+2. `classify_document`: экспресс-роутинг документа по первой странице.
+3. `verify_legal_data`: алгоритмический аудит реквизитов, сумм и дат.
+4. `run_benchmark`: запуск эталонного тестирования против Ground Truth.
+5. `export_results`: консолидация данных в реестры Excel и 1C.
 
-### Example request (one JSON object per line)
+### Пример запроса (один JSON-объект на строку)
 ```json
 {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
 {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "classify_document", "arguments": {"file_path": "incoming/order.pdf"}}}
@@ -202,19 +207,19 @@ trusted in-perimeter integrations:
 
 ---
 
-## Architecture & Status Taxonomy
+## Архитектура и таксономия статусов
 
-Detailed component diagrams, lifecycle flows, and status semantics are available in [ARCHITECTURE.md](ARCHITECTURE.md) ([Русский](ARCHITECTURE_RU.md)).
-
----
-
-## Support
-
-- 🐛 **Bugs & feature requests:** [GitHub Issues](https://github.com/Riper21/ScanReader/issues)
-- 💬 **Quick questions & integration help:** Telegram — [@riper21](https://t.me/riper21)
+Подробные диаграммы компонентов, жизненный цикл обработки и семантика статусов представлены в документе [ARCHITECTURE_RU.md](ARCHITECTURE_RU.md) ([English](ARCHITECTURE.md)).
 
 ---
 
-## License
+## Поддержка
 
-MIT License. See [LICENSE](LICENSE) for details.
+- 🐛 **Баги и предложения:** [GitHub Issues](https://github.com/Riper21/ScanReader/issues)
+- 💬 **Быстрые вопросы и помощь с интеграцией:** Telegram — [@riper21](https://t.me/riper21)
+
+---
+
+## Лицензия
+
+Лицензия MIT. Подробнее см. в [LICENSE_RU.md](LICENSE_RU.md).

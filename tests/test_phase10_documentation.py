@@ -23,7 +23,7 @@ from scan_reader.verifier.status import VerificationStatus
 REPO = Path(__file__).resolve().parent.parent
 SRC = REPO / "src" / "scan_reader"
 
-DOC_FILES = ("README.md", "README_RU.md", "ARCHITECTURE.md", "ARCHITECTURE_RU.md",
+DOC_FILES = ("README.md", "README_EN.md", "ARCHITECTURE.md", "ARCHITECTURE_RU.md",
              "AGENTS.md", "SECURITY.md", "SECURITY_RU.md", "docs/USER_GUIDE_RU.md")
 
 
@@ -100,7 +100,7 @@ def test_no_false_mcp_sdk_compatibility_claim():
         assert "Model Context Protocol (MCP) Interface" not in text, doc
         assert "Интерфейс Model Context Protocol (MCP)" not in text, doc
         # README прямо признаёт несовместимость
-    for doc in ("README.md", "README_RU.md"):
+    for doc in ("README.md", "README_EN.md"):
         text = _read(doc).lower()
         assert ("не совместим" in text) or ("not compatible" in text), (
             f"{doc}: не указано, что сервер не совместим с MCP SDK"
@@ -119,7 +119,7 @@ def test_unimplemented_features_are_not_claimed():
 # Согласованность кодов возврата
 # =========================================================================
 @pytest.mark.parametrize(
-    "doc", ["README.md", "README_RU.md", "docs/USER_GUIDE_RU.md"]
+    "doc", ["README.md", "README_EN.md", "docs/USER_GUIDE_RU.md"]
 )
 def test_documented_exit_codes_match_code(doc):
     text = _read(doc)
@@ -184,7 +184,7 @@ def test_agents_md_states_ocr_does_not_apply_to_harm():
 
 
 def test_docs_mention_ocr_extra():
-    for doc in ("README.md", "README_RU.md"):
+    for doc in ("README.md", "README_EN.md"):
         text = _read(doc)
         assert '".[ocr]"' in text, f"{doc}: не описан extra [ocr]"
 
@@ -227,7 +227,7 @@ def test_env_vars_read_by_code_are_documented():
 # =========================================================================
 def test_readme_plugin_count_matches_registry():
     count = len(get_registry().enabled())
-    for doc in ("README.md", "README_RU.md"):
+    for doc in ("README.md", "README_EN.md"):
         text = _read(doc)
         m = re.search(r"(\d+)\s+(?:essential|essential Russian|ключевых|поддерживаемых)", text)
         if m:

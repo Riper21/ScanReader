@@ -176,6 +176,22 @@ swallowed exceptions hid the causes of degraded benchmarks.
   pointed at a different copy of the project (0.8.0), so tests could
   import foreign code. README documents the editable-install check.
 
+Documentation language (follow-up to P4): the main README.md is now
+Russian — the project's target audience; the English README moved to
+README_EN.md.
+
+### Changed
+
+- The main `README.md` is now the Russian readme: the GitHub landing
+  page renders Russian by default. The English version moved to
+  `README_EN.md`; `README_RU.md` was removed as a duplicate of the new
+  main page. Cross-links (the language switcher, the user instruction
+  doc) and the documentation tests were updated to the new file pair;
+  the Russian README gained the editable-install section that
+  previously existed only in English, and its exit-code table row for
+  code 3 now says «кросс-модальный гейт», consistent with the rest of
+  the documentation.
+
 ## [0.9.5] - 2026-10-13
 
 Zero-trust invariants (phase P1 of the multi-agent audit): statutory
