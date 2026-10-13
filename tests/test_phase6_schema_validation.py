@@ -446,3 +446,97 @@ def test_commercial_contract_money_rule_is_alive():
     }
     report_bad = ZeroTrustAuditor.audit_document(inconsistent, doc_type="commercial_contracts")
     assert any(i.code == "CONTRACT_TOTAL_DISCREPANCY" for i in report_bad.issues)
+
+
+# =========================================================================
+# P1.9: оставшиеся ограничения форм (Rule 6)
+# =========================================================================
+def _hr_employee():
+    plugin = get_registry().get("hr_orders")
+    return _nested(plugin.schema_cls.model_fields["employee"])
+
+
+def test_p19_hr_employee_inn_from_party_mixin():
+    """ИНН работника наследует ValidatedPartyMixin: форма и чексумма ФНС."""
+    model = _hr_employee()
+    assert model(inn="").inn is None
+    assert model(inn="7707083893").inn == "7707083893"
+    with pytest.raises(ValueError):
+        model(inn="123")          # не 10/12 цифр
+    with pytest.raises(ValueError):
+        model(inn="7701234567")   # неверная контрольная сумма
+
+
+def test_p19_hr_employee_snils_form():
+    """СНИЛС работника: 11 цифр, пустое значение пропускается."""
+    model = _hr_employee()
+    assert model(snils="").snils == ""
+    assert model(snils="112-233-445 95").snils == "112-233-445 95"
+    with pytest.raises(ValueError):
+        model(snils="123-45")  # мало цифр
+    with pytest.raises(ValueError):
+        model(snils="123456789012")  # 12 цифр — не СНИЛС
+
+
+def test_p19_hr_organization_inn_form():
+    """ИНН организации в корне приказа: 10/12 цифр, пустое пропускается."""
+    plugin = get_registry().get("hr_orders")
+    doc_cls = plugin.schema_cls
+    assert doc_cls(organization_inn="").organization_inn == ""
+    assert doc_cls(organization_inn="7707083893").organization_inn == "7707083893"
+    with pytest.raises(ValueError):
+        doc_cls(organization_inn="77070838931")  # 11 цифр
+
+
+def test_p19_upd_item_amounts_are_non_negative():
+    """Построчные суммы УПД: отрицательные значения — ошибка формы."""
+    plugin = get_registry().get("invoices_upd")
+    item = _nested(plugin.schema_cls.model_fields["items"])
+    with pytest.raises(ValueError):
+        item(price=-100.0)
+    with pytest.raises(ValueError):
+        item(quantity=-2.0)
+    with pytest.raises(ValueError):
+        item(vat_amount=-0.01)
+    assert item(price=100.0).price == 100.0
+    finances = _nested(plugin.schema_cls.model_fields["finances"])
+    with pytest.raises(ValueError):
+        finances(total_rub_no_vat=-1.0)
+    assert finances(total_rub_no_vat=100.0).total_rub_no_vat == 100.0
+
+
+def test_p19_commercial_contract_ogrn_form():
+    """ОГРН контрагента: 13 или 15 цифр, пустое пропускается."""
+    plugin = get_registry().get("commercial_contracts")
+    party = _nested(plugin.schema_cls.model_fields["party_one"])
+    assert party(ogrn="").ogrn == ""
+    assert party(ogrn="1027700132195").ogrn == "1027700132195"      # 13
+    assert party(ogrn="304774612345678").ogrn == "304774612345678"  # 15 (ОГРНИП)
+    with pytest.raises(ValueError):
+        party(ogrn="102770013219")   # 12 цифр
+    with pytest.raises(ValueError):
+        party(ogrn="ОГРН 123")       # не цифры
+
+
+def test_p19_poa_agent_snils_form():
+    """СНИЛС представителя в доверенности: 11 цифр, пустое пропускается."""
+    plugin = get_registry().get("powers_of_attorney")
+    agent = _nested(plugin.schema_cls.model_fields["agent"])
+    assert agent(snils="").snils == ""
+    assert agent(snils="112-233-445 95").snils == "112-233-445 95"
+    with pytest.raises(ValueError):
+        agent(snils="1234567890")  # 10 цифр — не СНИЛС
+
+
+def test_p19_executive_blank_form():
+    """Бланк исполнительного листа: серия — буквы, номер — 6-12 цифр."""
+    plugin = get_registry().get("executive_documents")
+    doc_cls = plugin.schema_cls
+    assert doc_cls(blank_series="", blank_number="").blank_series == ""
+    assert doc_cls(blank_series="ФС", blank_number="123456789").blank_number == "123456789"
+    with pytest.raises(ValueError):
+        doc_cls(blank_series="ФС007")   # серия с цифрами
+    with pytest.raises(ValueError):
+        doc_cls(blank_number="123")    # слишком короткий номер
+    with pytest.raises(ValueError):
+        doc_cls(blank_number="123456789012345")  # 15 цифр — не бланк

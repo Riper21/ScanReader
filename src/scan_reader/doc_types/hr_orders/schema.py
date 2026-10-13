@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
+import re
 from typing import Optional, Any
 from pydantic import BaseModel, Field, field_validator
 from scan_reader.core.finance_parser import parse_russian_currency
+from scan_reader.core.fields import INN_PATTERN, ValidatedPartyMixin, digits_only
 from scan_reader.core.utils import coerce_to_str
 
 
-class HrEmployeeInfo(BaseModel):
+class HrEmployeeInfo(ValidatedPartyMixin):
 
 
     full_name: str = Field(default="", description="ФИО работника")
@@ -15,12 +17,24 @@ class HrEmployeeInfo(BaseModel):
     salary_rub: Optional[float] = Field(ge=0, default=None, description="Оклад / тарифная ставка (руб)")
     bonus_rub: Optional[float] = Field(ge=0, default=None, description="Надбавка (руб)")
     snils: str = Field(default="", description="СНИЛС работника")
-    inn: str = Field(default="", description="ИНН работника")
+
+    # P1.9: поле inn наследуется из ValidatedPartyMixin — раньше объявлялось
+    # здесь как str без ограничений, и 15-значный «ИНН» проходил схему.
 
     @field_validator("full_name", "personnel_number", "structural_unit", "position", "snils", "inn", mode="before")
     @classmethod
     def clean_strings(cls, v: Any) -> str:
         return coerce_to_str(v)
+
+    @field_validator("snils", mode="after")
+    @classmethod
+    def _check_snils(cls, v: str) -> str:
+        if not v.strip():
+            return v
+        cleaned = digits_only(v)
+        if cleaned is None or len(cleaned) != 11:
+            raise ValueError(f"СНИЛС должен содержать 11 цифр, получено: {v!r}")
+        return v
 
     @field_validator("salary_rub", "bonus_rub", mode="before")
     @classmethod
@@ -52,3 +66,18 @@ class HrOrderDoc(BaseModel):
     @classmethod
     def clean_strings(cls, v: Any) -> str:
         return coerce_to_str(v)
+
+    # P1.9: форма ИНН организации — чек-сумму проверяет аудитор
+    # (identifier_checks с kind=inn), схема отвергает только то, что
+    # не может быть ИНН по длине.
+    @field_validator("organization_inn", mode="after")
+    @classmethod
+    def _check_org_inn(cls, v: str) -> str:
+        if not v.strip():
+            return v
+        cleaned = digits_only(v)
+        if cleaned is None or not re.match(INN_PATTERN, cleaned):
+            raise ValueError(
+                f"ИНН организации должен содержать 10 или 12 цифр, получено: {v!r}"
+            )
+        return v

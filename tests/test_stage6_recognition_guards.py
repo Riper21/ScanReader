@@ -37,16 +37,16 @@ def test_s10_ip_number_not_misparsed_as_fraction():
 
 def test_s10_alimony_fraction_enforces_229fz():
     """S-10: «2/3» (66.67%) без алиментов — нарушение лимита; с алиментами — легально."""
-    ok, msg = verify_deduction_percentage("2/3 заработка", has_alimony_or_harm=False)
+    ok, msg = verify_deduction_percentage("2/3 заработка", has_alimony=False)
     assert ok is False  # 66.67% > 50 без алиментов
 
-    ok, msg = verify_deduction_percentage("2/3 заработка", has_alimony_or_harm=True)
+    ok, msg = verify_deduction_percentage("2/3 заработка", has_alimony=True)
     assert ok is True  # алименты: до 70%
 
 
 def test_s10_quarter_alimony_legal():
     """S-10: «1/4» (алименты) — в пределах лимита."""
-    ok, _ = verify_deduction_percentage("1/4 заработка", has_alimony_or_harm=True)
+    ok, _ = verify_deduction_percentage("1/4 заработка", has_alimony=True)
     assert ok is True
 
 

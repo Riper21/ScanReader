@@ -22,12 +22,13 @@ class UpdItem(BaseModel):
     row_num: str = Field(default="1", description="Номер строки")
     name: str = Field(default="", description="Наименование товара / описания выполненных работ / услуг")
     unit: str = Field(default="шт", description="Единица измерения (код или условное обозначение)")
-    quantity: Optional[float] = Field(default=None, description="Количество (объем)")
-    price: Optional[float] = Field(default=None, description="Цена за единицу измерения без НДС")
-    amount_no_vat: Optional[float] = Field(default=None, description="Стоимость товаров без налога")
+    # P1.9: Rule 6 — количества и суммы не бывают отрицательными
+    quantity: Optional[float] = Field(ge=0, default=None, description="Количество (объем)")
+    price: Optional[float] = Field(ge=0, default=None, description="Цена за единицу измерения без НДС")
+    amount_no_vat: Optional[float] = Field(ge=0, default=None, description="Стоимость товаров без налога")
     vat_rate: str = Field(default="20%", description="Налоговая ставка (20%, 10%, 0%, без НДС)")
-    vat_amount: Optional[float] = Field(default=None, description="Сумма налога (НДС)")
-    total_amount: Optional[float] = Field(default=None, description="Стоимость товаров всего с учетом налога")
+    vat_amount: Optional[float] = Field(ge=0, default=None, description="Сумма налога (НДС)")
+    total_amount: Optional[float] = Field(ge=0, default=None, description="Стоимость товаров всего с учетом налога")
 
     @field_validator("quantity", "price", "amount_no_vat", "vat_amount", "total_amount", mode="before")
     @classmethod
@@ -41,7 +42,7 @@ class UpdItem(BaseModel):
 
 
 class UpdFinances(BaseModel):
-    total_rub_no_vat: Optional[float] = Field(default=None, description="Всего стоимость без налога")
+    total_rub_no_vat: Optional[float] = Field(ge=0, default=None, description="Всего стоимость без налога")
     total_vat_rub: Optional[float] = Field(ge=0, default=None, description="Всего сумма налога (НДС)")
     total_rub: Optional[float] = Field(ge=0, default=None, description="Всего к оплате с учетом налога")
     currency: str = Field(default="Российский рубль, 643", description="Валюта документа")

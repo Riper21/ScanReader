@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
+import re
 from typing import Optional, Any
 from pydantic import BaseModel, Field, field_validator
 from scan_reader.core.finance_parser import parse_russian_currency
-from scan_reader.core.fields import ValidatedPartyMixin
+from scan_reader.core.fields import OGRNIP_PATTERN, OGRN_PATTERN, ValidatedPartyMixin
 from scan_reader.core.utils import coerce_to_str
 
 
@@ -17,6 +18,19 @@ class PartyInfo(ValidatedPartyMixin):
     @classmethod
     def clean_strings(cls, v: Any) -> str:
         return coerce_to_str(v)
+
+    # P1.9: Rule 6 — ОГРН/ОГРНИП имеет фиксированную длину, «не может быть
+    # значением поля» отвергается схемой (пустое значение пропускается).
+    @field_validator("ogrn", mode="after")
+    @classmethod
+    def _check_ogrn(cls, v: str) -> str:
+        if not v.strip():
+            return v
+        if not (re.match(OGRN_PATTERN, v) or re.match(OGRNIP_PATTERN, v)):
+            raise ValueError(
+                f"ОГРН должен содержать 13 цифр (или 15 для ОГРНИП), получено: {v!r}"
+            )
+        return v
 
 
 class ContractFinances(BaseModel):

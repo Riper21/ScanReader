@@ -125,6 +125,41 @@ def test_stage5_counts_failed_documents_not_as_processed(tmp_path, capsys):
     facade.registry = get_registry()
     facade.results_dir = str(tmp_path)
     results = [{"doc_type": "salary_deductions", "status": "FAILED"} for _ in range(2)]
-    facade._batch_stage5_metrics({"salary_deductions": ["a", "b"]}, results, 1)
+    facade._batch_stage5_metrics({"salary_deductions": ["a", "b"]}, results)
     out = capsys.readouterr().out
-    assert "Успешно обработано: 0 | Сбоев: 3" in out
+    # P1.7: единый источник счёта — status=="FAILED". Раньше к failed
+    # прибавлялся error_count того же прогона, и один сбой задваивался.
+    assert "Успешно обработано: 0 | Сбоев: 2" in out
+
+
+def test_stage4_and_stage5_agree_on_failure_count(tmp_path, capsys):
+    """P1.7: сбой-исключение считается один раз, а не дважды.
+
+    Один документ из трёх падает исключением: он попадает в results со
+    статусом FAILED и в errors, но сводка обязана назвать «Сбоев: 1».
+    """
+    from scan_reader.facade import LegalDocPlatformFacade
+    from scan_reader.type_registry import get_registry
+
+    facade = LegalDocPlatformFacade.__new__(LegalDocPlatformFacade)
+    facade.registry = get_registry()
+    facade.results_dir = str(tmp_path)
+    files = []
+    for name in ("a.pdf", "b.pdf", "c.pdf"):
+        p = tmp_path / name
+        p.write_text("x")
+        files.append(str(p))
+    ok = {"doc_type": "hr_orders", "status": "COMPLETED", "file_name": "ok"}
+    with patch.object(
+        facade,
+        "process_single_document",
+        side_effect=[ok, RuntimeError("сбой модели"), ok],
+    ):
+        results, errors = facade._batch_stage4_extract({"hr_orders": files})
+
+    assert len(errors) == 1
+    assert sum(1 for r in results if r.get("status") == "FAILED") == 1
+
+    facade._batch_stage5_metrics({"hr_orders": files}, results)
+    out = capsys.readouterr().out
+    assert "Успешно обработано: 2 | Сбоев: 1" in out

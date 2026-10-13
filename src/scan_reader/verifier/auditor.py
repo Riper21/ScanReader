@@ -13,7 +13,11 @@ from ..core.utils import as_dict as _as_dict, get_logger
 from .checksums import clean_digits, validate_bik, validate_inn, validate_ogrn, validate_snils, validate_bank_account
 from .chronology import parse_flexible_date
 from .hallucination_gate import audit_cross_modal_consistency
-from .math_verifier import verify_deduction_percentage, parse_percentage_value
+from .math_verifier import (
+    parse_percentage_value,
+    split_deduction_basis,
+    verify_deduction_percentage,
+)
 from .spec import VerificationSpec, get_nested_value, resolve_spec
 from .status import VerificationIssue, VerificationReport, VerificationStatus
 
@@ -339,10 +343,27 @@ class ZeroTrustAuditor:
                 continue
             seen.add(path)
             value = get_nested_value(data, path)
-            if not value or not isinstance(value, str) or len(value.strip()) < 9:
+            if value is None or str(value).strip().lower() in _EMPTY_STRINGS:
+                # Пустое Optional-поле — легитимное отсутствие реквизита.
+                continue
+            value_str = str(value).strip()
+            if len(value_str) < 9:
+                # P1.3: обрывки в 1-8 символов раньше молча выпадали из всех
+                # проверок. Ни один верифицируемый реквизит (ИНН/СНИЛС/ОГРН/
+                # БИК) не бывает короче 9 знаков — это нечитаемое значение.
+                # Само значение не выводим (Правило 5): длина и путь достаточны.
+                issues.append(
+                    VerificationIssue(
+                        "warning",
+                        "UNREADABLE_IDENTIFIER",
+                        f"Идентификатор короче 9 знаков ({len(value_str)}): "
+                        f"контрольная сумма не проверялась",
+                        path,
+                    )
+                )
                 continue
             checker, code = checkers.get(kind, (validate_inn, "INVALID_INN"))
-            ok, msg = checker(value)
+            ok, msg = checker(value_str)
             _bump(ok)
             if not ok:
                 issues.append(VerificationIssue("error", code, msg, path))
@@ -369,9 +390,9 @@ class ZeroTrustAuditor:
                 issues.append(VerificationIssue("error", "INVALID_BIK", msg, bank.get("bik", "bik")))
 
         account_path = bank.get("account")
-        if account_path and bik_value:
+        if account_path:
             account = get_nested_value(data, account_path)
-            if account:
+            if account and bik_value:
                 ok_acc, msg_acc = validate_bank_account(str(account), str(bik_value))
                 _bump(ok_acc)
                 if not ok_acc:
@@ -396,6 +417,19 @@ class ZeroTrustAuditor:
                         issues.append(
                             VerificationIssue("error", "INVALID_BANK_ACCOUNT", msg_acc, account_path)
                         )
+            elif account and not bik_value:
+                # P1.3: счёт без БИК раньше молча пропускался — ключ счета по
+                # 565-П не проверялся вовсе. Это не ошибка (БИК мог отсутствовать
+                # в документе), но и не «проверено».
+                issues.append(
+                    VerificationIssue(
+                        "warning",
+                        "ACCOUNT_WITHOUT_BIK",
+                        "Расчётный счёт указан без БИК: ключ счета по Положению 565-П "
+                        "не проверялся",
+                        account_path,
+                    )
+                )
 
         # Структурные проверки реквизитов, не имеющих контрольной суммы
         if bank.get("uin") and bank.get("rosp_code"):
@@ -483,16 +517,21 @@ class ZeroTrustAuditor:
                     str(get_nested_value(data, p) or "")
                     for p in (limit["basis_fields"] or ["claim_subject"])
                 ).lower()
-                has_basis = any(
-                    marker in basis
-                    for marker in ("алимент", "несовершеннолетн", "ребен", "содержание", "вред")
+                # P1.1: основания разделены — «вред» больше не попадает в
+                # 70%-ветку алиментов: для вреда здоровью потолка нет вовсе.
+                has_alimony, has_harm = split_deduction_basis(basis)
+                ok, msg = verify_deduction_percentage(
+                    str(value), has_alimony=has_alimony, has_harm=has_harm
                 )
-                ok, msg = verify_deduction_percentage(str(value), has_alimony_or_harm=has_basis)
                 if not ok:
                     pct = parse_percentage_value(str(value))
                     severity = "error" if (pct is not None and pct > 70.0) else "warning"
-                    if limit["severity"] == "error":
-                        severity = "error" if severity == "error" else severity
+                    # P1.7: заявка плагина применяется честно. Раньше стояло
+                    # тождество `severity = severity`, и limit["severity"]="error"
+                    # из verification.json не повышал нарушение лимита до ошибки:
+                    # удержание 60% без основания проходило как предупреждение.
+                    if str(limit.get("severity", "")).lower() == "error":
+                        severity = "error"
                     issues.append(
                         VerificationIssue(severity, "STATUTORY_LIMIT_ALERT", msg, limit["path"])
                     )

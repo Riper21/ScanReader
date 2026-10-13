@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
+import re
 from typing import Optional, Any
 from pydantic import BaseModel, Field, field_validator
 from scan_reader.core.finance_parser import parse_russian_currency
-from scan_reader.core.fields import ValidatedPartyMixin
+from scan_reader.core.fields import ValidatedBankMixin, ValidatedPartyMixin
 from scan_reader.core.utils import coerce_to_str
 
 
@@ -15,6 +16,62 @@ class PartyClaimInfo(ValidatedPartyMixin):
     @classmethod
     def clean_strings(cls, v: Any) -> str:
         return coerce_to_str(v)
+
+
+class BankRequisitesInfo(ValidatedBankMixin):
+    """
+    P1.4: банковский блок претензии — структурированная модель вместо строки.
+
+    Раньше поле было строкой, и все проверки verification.json
+    (bank_requisites.bik, .account, .kpp, .oktmo) указывали на несуществующие
+    пути — контрольные суммы БИК и ключ счёта не работали никогда.
+    """
+
+    bank_name: str = Field(default="", description="Наименование банка получателя")
+    kpp: Optional[str] = Field(default=None, description="КПП получателя (9 цифр)")
+    oktmo: Optional[str] = Field(default=None, description="ОКТМО получателя")
+    recipient: str = Field(default="", description="Получатель платежа (для счетов Банка России/ГРКЦ)")
+
+    @field_validator("bank_name", "recipient", mode="before")
+    @classmethod
+    def clean_strings(cls, v: Any) -> str:
+        return coerce_to_str(v)
+
+    @field_validator("kpp", "oktmo", mode="before")
+    @classmethod
+    def _blank_to_none(cls, v: Any) -> Any:
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
+
+def _parse_bank_requisites(v: Any) -> Any:
+    """
+    Обратная совместимость: модель может прийти строкой старого формата
+    («р/с 40702810..., БИК 044525...»), как её извлекала модель раньше.
+
+    Структурированные реквизиты вытаскиваются регулярными выражениями,
+    остальной текст сохраняется в bank_name.
+    """
+    if isinstance(v, str):
+        blob = v.strip()
+        if not blob:
+            return {}
+        parsed: dict = {}
+        account = re.search(r"(?:р/с|р/сч|расч\.?\s*счет)[^\d]{0,10}(\d{20})", blob, re.IGNORECASE)
+        if account:
+            parsed["payment_account"] = account.group(1)
+        bik = re.search(r"БИК[^\d]{0,10}(\d{9})", blob, re.IGNORECASE)
+        if bik:
+            parsed["bik"] = bik.group(1)
+        kpp = re.search(r"КПП[^\d]{0,10}(\d{9})", blob, re.IGNORECASE)
+        if kpp:
+            parsed["kpp"] = kpp.group(1)
+        bank = re.search(r"(?:в\s+)?(?:ПАО|АО|ЗАО|ОАО|Банк|банк)\s+[А-ЯЁA-Za-z«»\s\-]+", blob)
+        if bank:
+            parsed["bank_name"] = bank.group(0).strip()
+        return parsed
+    return v
 
 
 class ClaimFinances(BaseModel):
@@ -50,10 +107,18 @@ class LegalClaimDoc(BaseModel):
     finances: ClaimFinances = Field(default_factory=ClaimFinances, description="Суммы финансовых требований")
     response_deadline_days: Optional[int] = Field(default=None, description="Срок ответа на претензию в календарных/рабочих днях")
     response_deadline_date: str = Field(default="", description="Точная дата дедлайна ответа")
-    bank_requisites: str = Field(default="", description="Банковские реквизиты для перечисления средств")
+    bank_requisites: BankRequisitesInfo = Field(
+        default_factory=BankRequisitesInfo,
+        description="Банковские реквизиты для перечисления средств (счёт, БИК, банк)",
+    )
     has_signature_stamp: bool = Field(default=True, description="Наличие подписи уполномоченного лица и печати")
 
-    @field_validator("doc_number", "doc_date", "city", "contract_basis_number", "contract_basis_date", "claim_subject", "response_deadline_date", "bank_requisites", mode="before")
+    @field_validator("doc_number", "doc_date", "city", "contract_basis_number", "contract_basis_date", "claim_subject", "response_deadline_date", mode="before")
     @classmethod
     def clean_strings(cls, v: Any) -> str:
         return coerce_to_str(v)
+
+    @field_validator("bank_requisites", mode="before")
+    @classmethod
+    def parse_bank_block(cls, v: Any) -> Any:
+        return _parse_bank_requisites(v)

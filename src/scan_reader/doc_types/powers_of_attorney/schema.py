@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from typing import Any
 from pydantic import BaseModel, Field, field_validator
-from scan_reader.core.fields import ValidatedPartyMixin
+from scan_reader.core.fields import ValidatedPartyMixin, digits_only
 from scan_reader.core.utils import coerce_to_str
 
 
@@ -32,6 +32,18 @@ class AttorneyAgentInfo(ValidatedPartyMixin):
     @classmethod
     def clean_strings(cls, v: Any) -> str:
         return coerce_to_str(v)
+
+    # P1.9: Rule 6 — СНИЛС содержит 11 цифр; «не может быть значением поля»
+    # отвергается схемой, пустое значение пропускается.
+    @field_validator("snils", mode="after")
+    @classmethod
+    def _check_snils(cls, v: str) -> str:
+        if not v.strip():
+            return v
+        cleaned = digits_only(v)
+        if cleaned is None or len(cleaned) != 11:
+            raise ValueError(f"СНИЛС должен содержать 11 цифр, получено: {v!r}")
+        return v
 
 
 class PowerOfAttorneyDoc(BaseModel):

@@ -94,16 +94,14 @@ def validate_ip_number_format(ip_num: Optional[str]) -> Tuple[bool, float]:
 
 
 def _check_percentage_limit(value: Any, data: Dict[str, Any]) -> bool:
-    from ..verifier.math_verifier import verify_deduction_percentage
+    from ..verifier.math_verifier import split_deduction_basis, verify_deduction_percentage
 
     subject = " ".join(
         str(data.get(k) or "") for k in ("claim_subject", "claim", "subject", "deduction_basis")
     ).lower()
-    has_basis = any(
-        marker in subject
-        for marker in ("алимент", "несовершеннолетн", "ребен", "содержание", "вред")
-    )
-    ok, _msg = verify_deduction_percentage(str(value), has_alimony_or_harm=has_basis)
+    # P1.1: основания разделены (вред здоровью — без потолка, ФЗ 314-ФЗ).
+    has_alimony, has_harm = split_deduction_basis(subject)
+    ok, _msg = verify_deduction_percentage(str(value), has_alimony=has_alimony, has_harm=has_harm)
     return ok
 
 

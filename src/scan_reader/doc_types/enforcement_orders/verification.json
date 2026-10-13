@@ -1,20 +1,10 @@
 {
   "_comment": "Заявление о возбуждении ИП и постановление о взыскании на зарплату.",
   "parties": [
-    {"path": "claimant", "label": "взыскатель", "ids": ["inn", "ogrn"]},
-    {"path": "debtor", "label": "должник", "ids": ["inn", "ogrn"]}
+    {"path": "claimant", "label": "взыскатель", "ids": ["inn"]},
+    {"path": "debtor", "label": "должник", "ids": ["inn"]}
   ],
   "identifier_checks": [],
-  "bank": [
-    {
-      "bik": "payment_details.bik",
-      "account": "payment_details.payment_account",
-      "uin": "payment_details.uin",
-      "rosp_code": "payment_details.rosp_code",
-      "kpp": "payment_details.recipient_kpp",
-      "oktmo": "payment_details.oktmo"
-    }
-  ],
   "money_rules": [
     {
       "code": "ENFORCEMENT_MATH_DISCREPANCY",

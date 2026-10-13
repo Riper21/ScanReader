@@ -8,6 +8,7 @@ Statutory 229-FZ Limits, Chronology, and Auditor.
 from scan_reader.verifier import (
     VerificationStatus,
     ZeroTrustAuditor,
+    split_deduction_basis,
     validate_bank_account,
     validate_bik,
     validate_inn,
@@ -105,22 +106,71 @@ def test_math_reconciliation():
 
 def test_deduction_percentage_limits():
     # Valid 50%
-    ok, msg = verify_deduction_percentage("50% ежемесячно", has_alimony_or_harm=False)
+    ok, msg = verify_deduction_percentage("50% ежемесячно", has_alimony=False)
     assert ok is True
 
     # Alert > 50% without alimony
-    ok, msg = verify_deduction_percentage("70%", has_alimony_or_harm=False)
+    ok, msg = verify_deduction_percentage("70%", has_alimony=False)
     assert ok is False
     assert "Statutory limit alert" in msg
 
     # Allowed 70% with alimony
-    ok, msg = verify_deduction_percentage("70%", has_alimony_or_harm=True)
+    ok, msg = verify_deduction_percentage("70%", has_alimony=True)
     assert ok is True
 
     # Prohibited > 70%
-    ok, msg = verify_deduction_percentage("80%", has_alimony_or_harm=True)
+    ok, msg = verify_deduction_percentage("80%", has_alimony=True)
     assert ok is False
     assert "Statutory violation" in msg
+
+
+def test_deduction_percentage_harm_to_health_has_no_ceiling():
+    """
+    P1.1 (Правило 2 AGENTS.md): возмещение вреда здоровью — без процентного
+    потолка (ФЗ № 314-ФЗ от 06.03.2019). Раньше «вред» смешивался с алиментами
+    и подчинялся 70%-лимиту, которого для него не существует.
+    """
+    # 100% на возмещение вреда здоровью — passed с пояснением, а не провал
+    ok, msg = verify_deduction_percentage("100%", has_harm=True)
+    assert ok is True
+    assert "314-FZ" in msg
+
+    # 80% при алиментах + вреде — passed: вред снимает потолок
+    ok, msg = verify_deduction_percentage("80%", has_alimony=True, has_harm=True)
+    assert ok is True
+
+    # 100% при алиментах без вреда — превышение 70%-потолка алиментов
+    ok, msg = verify_deduction_percentage("100%", has_alimony=True)
+    assert ok is False
+    assert "Statutory violation" in msg
+
+    # 150% — не процент вовсе, а мусор от модели
+    ok, msg = verify_deduction_percentage("150%", has_harm=True)
+    assert ok is False
+    assert "not a valid percentage" in msg
+
+
+def test_split_deduction_basis_separates_alimony_and_harm():
+    """P1.1: разложение текста основания на два независимых флага."""
+    a, h = split_deduction_basis("взыскание алиментов на несовершеннолетних детей")
+    assert (a, h) == (True, False)
+
+    a, h = split_deduction_basis("возмещение вреда, причинённого здоровью")
+    assert (a, h) == (False, True)
+
+    a, h = split_deduction_basis("тяжкий вред здоровью, компенсация")
+    assert (a, h) == (False, True)
+
+    # Моральный вред без «здоров» harm'ом не считается
+    a, h = split_deduction_basis("компенсация морального вреда")
+    assert (a, h) == (False, False)
+
+    # Смерть кормильца — 70%-ветка вместе с алиментами
+    a, h = split_deduction_basis("вред в связи со смертью кормильца")
+    assert (a, h) == (True, False)
+
+    a, h = split_deduction_basis("")
+    assert (a, h) == (False, False)
 
 
 def test_chronology_verification():
@@ -165,6 +215,59 @@ def test_zero_trust_auditor_full():
     assert report.has_errors is False
     assert report.details["checksums_verified_ok"] >= 1
     assert report.details["math_verified_ok"] is True
+
+
+def test_p13_unreadable_short_identifier_is_flagged():
+    """
+    P1.3 (Правило 1): обрывок идентификатора (1-8 знаков) раньше молча
+    выпадал из всех проверок — ни warning, ни чексуммы.
+    """
+    sample_doc = {
+        "payment_details": {"recipient_inn": "123"},  # обрывок вместо 10-значного ИНН
+        "finances": {
+            "debt_amount_rub": 50000.0,
+            "fee_penalty_rub": 3500.0,
+            "total_deduction_rub": 53500.0,
+        },
+    }
+    report = ZeroTrustAuditor.audit_document(sample_doc, doc_type="salary_deductions")
+    codes = [i.code for i in report.issues]
+    assert "UNREADABLE_IDENTIFIER" in codes
+    # Короткое значение не должно попадать в знаменатель чексумм
+    assert report.details["checksums_checked"] == 0
+    # Warning, а не error: документ валиден, но реквизит нечитаем
+    assert report.is_valid is True
+    unreadable = next(i for i in report.issues if i.code == "UNREADABLE_IDENTIFIER")
+    assert unreadable.severity == "warning"
+    assert unreadable.field_name == "payment_details.recipient_inn"
+    # Само значение не выводится в сообщении (Правило 5 — ПДн не утекают)
+    assert "123" not in unreadable.message
+
+
+def test_p13_account_without_bik_is_flagged():
+    """
+    P1.3: счёт без БИК раньше молча пропускался — ключ счета по 565-П
+    не проверялся вовсе, и в отчёте не было ни строчки об этом.
+    """
+    sample_doc = {
+        "payment_details": {
+            "recipient_inn": "7707083893",
+            "payment_account": "40817810000000000001",
+        },
+        "finances": {
+            "debt_amount_rub": 50000.0,
+            "fee_penalty_rub": 3500.0,
+            "total_deduction_rub": 53500.0,
+        },
+    }
+    report = ZeroTrustAuditor.audit_document(sample_doc, doc_type="salary_deductions")
+    codes = [i.code for i in report.issues]
+    assert "ACCOUNT_WITHOUT_BIK" in codes
+    warning = next(i for i in report.issues if i.code == "ACCOUNT_WITHOUT_BIK")
+    assert warning.severity == "warning"
+    assert warning.field_name == "payment_details.payment_account"
+    # БИК отсутствует в документе — это не ошибка, но и не «проверено»
+    assert report.is_valid is True
 
 
 def test_zero_trust_auditor_on_upd_and_claims():

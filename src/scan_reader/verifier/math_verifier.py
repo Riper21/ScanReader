@@ -160,10 +160,37 @@ def parse_percentage_value(percent_str: str) -> Optional[float]:
         logger.debug(f"Дробь '{frac.group(0)}' в '{percent_str}' не является долей удержания")
         return None
 
-    for word, value in _PERCENT_WORDS.items():
+    # P1.2: сначала длинные фразы — иначе «трети» перехватывает «две трети»
+    # и «2/3 заработка» превращается в 33.33% вместо 66.67%.
+    for word in sorted(_PERCENT_WORDS, key=len, reverse=True):
         if word in s:
-            return value
+            return _PERCENT_WORDS[word]
     return None
+
+
+# P1.1: маркеры двух НЕЗАВИСИМЫХ оснований повышенного взыскания.
+# Алименты/смерть кормильца — ветка 70% ст. 99 229-ФЗ; возмещение вреда
+# здоровью — без процентного потолка (ФЗ № 314-ФЗ от 06.03.2019).
+_ALIMONY_MARKERS = ("алимент", "несовершеннолетн", "ребен", "содержание", "кормил")
+_HARM_MARKERS = ("вред", "здоров")
+
+
+def split_deduction_basis(text: str) -> Tuple[bool, bool]:
+    """
+    P1.1: разложение текста основания на два независимых флага.
+
+    Раньше все потребители (auditor, guardrails, metrics_evaluator) вычисляли
+    единый has_basis, где маркер «вред» попадал в 70%-ветку — прямое нарушение
+    Правила 2 AGENTS.md: для вреда здоровью потолка нет вовсе.
+
+    Возвращает (has_alimony, has_harm): harm распознаётся по совместному
+    появлению «вред» и «здоров» («вред, причинённый здоровью», «тяжкий вред
+    здоровью»); «моральный вред» без «здоров» harm'ом не считается.
+    """
+    s = str(text or "").lower()
+    has_alimony = any(m in s for m in _ALIMONY_MARKERS)
+    has_harm = "вред" in s and "здоров" in s
+    return has_alimony, has_harm
 
 
 def verify_tk138_ceiling(
@@ -195,22 +222,26 @@ def verify_tk138_ceiling(
 
 def verify_deduction_percentage(
     percentage_str: str,
-    has_alimony_or_harm: bool = False,
+    has_alimony: bool = False,
+    has_harm: bool = False,
 ) -> Tuple[bool, str]:
     """
     Проверка процента удержания по ст. 99 Федерального закона № 229-ФЗ.
 
-    Правовая рамка:
+    Правовая рамка (AGENTS.md, Правило 2):
     - ч. 1 — стандартный предел 50% от заработка НА РУКИ;
-    - ч. 2 — до 70% при взыскании АЛИМЕНТОВ на несовершеннолетних детей (и при
-      взыскании накопившихся алиментов за три и более года, с 2016 г.);
-    - вред, причинённый здоровью, и смерть кормильца к 70% НЕ относятся: там
-      компенсация выплачивается в полном объёме, 50%-й предел ст. 99 ч. 1 к ней
-      не применяется (ФЗ № 314-ФЗ от 06.03.2019), и отдельного процентного
-      потолка закон не устанавливает.
+    - ч. 2 — до 70% при взыскании АЛИМЕНТОВ на несовершеннолетних детей,
+      при взыскании задолженности по алиментам и при возмещении вреда в
+      связи со смертью кормильца;
+    - возмещение вреда, причинённого здоровью, — БЕЗ процентного потолка:
+      50%-й предел ст. 99 ч. 1 к нему не применяется (ФЗ № 314-ФЗ от
+      06.03.2019), и отдельного потолка закон не устанавливает. Допустимо
+      полное взыскание — возвращаем passed с пояснением, а не провал.
 
-    Параметр назван has_alimony_or_harm исторически и сохранён ради совместимости
-    вызывающего кода; по смыслу он означает наличие основания для превышения 50%.
+    P1.1: раньше вред смешивался с алиментами в одном флаге и подчинялся
+    70%-потолку, которого для него не существует.
+
+    Флаги удобно получать через split_deduction_basis() из текста основания.
     """
     val = parse_percentage_value(percentage_str)
     if val is None:
@@ -219,10 +250,23 @@ def verify_deduction_percentage(
     if val <= 0:
         return False, f"Deduction percentage must be positive, got {val}%"
 
-    if val > 70.0:
-        return False, f"Statutory violation: deduction ({val}%) exceeds maximum legal limit (70%)"
+    if val > 100.0:
+        return False, f"Deduction percentage {val}% is not a valid percentage (cannot exceed 100%)"
 
-    if val > 50.0 and not has_alimony_or_harm:
+    # Возмещение вреда здоровью: потолков нет, полное взыскание допустимо.
+    if has_harm:
+        return True, (
+            f"Harm-to-health compensation: full deduction {val}% allowed — no percentage "
+            "ceiling under Art. 99 229-FZ (Federal Law 314-FZ of 06.03.2019)"
+        )
+
+    if val > 70.0:
+        return False, (
+            f"Statutory violation: deduction ({val}%) exceeds maximum legal limit (70%) — "
+            "alimony/child support or breadwinner-death basis required"
+        )
+
+    if val > 50.0 and not has_alimony:
         return False, (
             f"Statutory limit alert: deduction is {val}% (> 50%). "
             "Under Art. 99 229-FZ exceeding 50% requires an alimony (child support) order; "

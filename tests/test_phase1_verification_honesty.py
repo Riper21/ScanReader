@@ -327,6 +327,71 @@ def test_deduction_70_without_basis_is_flagged_for_review():
     assert any(i.code == "STATUTORY_LIMIT_ALERT" for i in report.issues)
 
 
+def test_p17_declared_error_severity_breaks_validity():
+    """P1.7: limit["severity"]="error" из verification.json применяется честно.
+
+    Раньше строка `severity = severity` была no-op: удержание 60% без
+    основания проходило предупреждением, хотя плагин заявил ошибку.
+    """
+    from scan_reader.verifier.spec import VerificationSpec
+
+    spec = VerificationSpec({
+        "deduction_limit": {
+            "path": "finances.deduction_percentage",
+            "basis_fields": ["claim_subject"],
+            "severity": "error",
+        }
+    })
+    report = ZeroTrustAuditor.audit_document(
+        spec=spec,
+        data={
+            "finances": {
+                "debt_amount_rub": 100.0,
+                "fee_penalty_rub": 0.0,
+                "total_deduction_rub": 100.0,
+                "deduction_percentage": "60%",
+            },
+            "claim_subject": "взыскание задолженности",
+        },
+        doc_type="salary_deductions",
+        raw_ocr_text=RAW_UNRELATED,
+    )
+    issue = next(i for i in report.issues if i.code == "STATUTORY_LIMIT_ALERT")
+    assert issue.severity == "error"
+    assert report.status == VerificationStatus.DISCREPANCY_DETECTED
+
+
+def test_p18_money_rule_with_single_number_is_not_a_check():
+    """P1.8: одно число — не сверка. Правило 2: сравнивать обязаны
+    два и более числа, иначе статус остаётся vlm_unverified.
+
+    legal_claims раньше заявлял min_components=1: слагаемое отсутствовало,
+    «проверка» молча не выполнялась, а претензия с одной суммой выглядела
+    свереной.
+    """
+    from scan_reader.verifier.spec import VerificationSpec
+
+    spec = VerificationSpec({
+        "money_rules": [{
+            "code": "CLAIM_MATH_DISCREPANCY",
+            "total": ["finances.total_claim_rub"],
+            "components": [
+                ["основной долг", ["finances.principal_debt_rub"]],
+                ["неустойка", ["finances.penalty_rub"]],
+            ],
+            "min_components": 2, "tolerance": 0.05, "severity": "error",
+        }]
+    })
+    report = ZeroTrustAuditor.audit_document(
+        spec=spec,
+        data={"finances": {"total_claim_rub": 1000.0}},
+        doc_type="legal_claims",
+        raw_ocr_text=RAW_UNRELATED,
+    )
+    assert report.details.get("math_checked") is not True
+    assert report.status == VerificationStatus.VLM_UNVERIFIED
+
+
 # =========================================================================
 # C-08: отказ экстракции обязан быть отражён во внешнем статусе
 # =========================================================================
@@ -433,3 +498,60 @@ def test_c08_facade_survives_vlm_exception(tmp_path, monkeypatch):
     assert result["status"] == "FAILED"
     assert result["data"]["_extraction_failed"] is True
     assert "timed out" in result["errors"][0]
+
+
+# =========================================================================
+# P1.4: пути verification.json обязаны существовать в схеме плагина
+# =========================================================================
+def test_p14_dead_paths_are_reported_against_schema():
+    """Мёртвый путь (несуществующее поле) даёт предупреждение, а не тишину."""
+    from pydantic import BaseModel
+
+    from scan_reader.verifier.spec import VerificationSpec
+
+    class Party(BaseModel):
+        inn: str = ""
+
+    class Doc(BaseModel):
+        claimant: Party
+
+    spec = VerificationSpec({"parties": [{"path": "claimant", "ids": ["inn", "ogrn"]}]})
+    warnings = spec.validate_paths(Doc, "test_plugin")
+    # claimant.ogrn в Party нет — путь мёртвый
+    assert any("claimant.ogrn" in w for w in warnings)
+    # claimant.inn существует — предупреждения быть не должно
+    assert not any("claimant.inn" in w for w in warnings)
+
+
+def test_p14_alternative_path_valid_when_one_side_exists():
+    """Путь с |-альтернативами валиден, если резолвится хотя бы одна."""
+    from pydantic import BaseModel
+
+    from scan_reader.verifier.spec import VerificationSpec
+
+    class Court(BaseModel):
+        act_date: str = ""
+
+    class Doc(BaseModel):
+        court: Court
+
+    spec = VerificationSpec({"doc_ref_fields": ["act_date|court.act_date", "doc_date"]})
+    warnings = spec.validate_paths(Doc, "test_plugin")
+    # «act_date|court.act_date» валиден (вторая альтернатива живая),
+    # «doc_date» мёртвый (нет ни в корне, ни в court).
+    assert not any("court.act_date" in w for w in warnings)
+    assert any("'doc_date'" in w for w in warnings)
+
+
+def test_p14_all_plugins_without_dead_verification_paths():
+    """Все 9 плагинов грузятся без мёртвых путей в verification.json."""
+    from scan_reader.type_registry import get_registry
+
+    reg = get_registry(force_reload=True)
+    assert reg.load_errors == {}
+    dead = {
+        pid: p.verification_path_warnings
+        for pid, p in reg.plugins.items()
+        if p.verification_path_warnings
+    }
+    assert dead == {}

@@ -89,7 +89,7 @@ def test_stage5_does_not_write_metrics_xlsx(tmp_path, capsys):
     doc = _doc("d1.pdf", "salary_deductions")
     doc["doc_type"] = "salary_deductions"
     # Стадия 5 считает метрики только по завершённым документам
-    facade._batch_stage5_metrics({"salary_deductions": ["d1.pdf"]}, [doc], 0)
+    facade._batch_stage5_metrics({"salary_deductions": ["d1.pdf"]}, [doc])
     files = set(os.listdir(tmp_path))
     assert "run_metrics_summary.json" in files
     assert "run_metrics_summary.md" in files

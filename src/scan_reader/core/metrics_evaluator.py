@@ -31,7 +31,11 @@ from .guardrails import get_nested as _get_nested, run_guardrails, validate_ip_n
 # C-06: контрольная сумма ИНН берётся из verifier, а не дублируется в core.
 # Пакет verifier зависит только от stdlib, поэтому циклического импорта нет.
 from ..verifier.checksums import validate_inn
-from ..verifier.math_verifier import parse_percentage_value, verify_deduction_percentage
+from ..verifier.math_verifier import (
+    parse_percentage_value,
+    split_deduction_basis,
+    verify_deduction_percentage,
+)
 
 logger = get_logger("core.metrics_evaluator")
 
@@ -367,11 +371,9 @@ def validate_deduction_rate(rate_str: Optional[str], claim_subject: str = "") ->
     if not rate_str:
         return False, 0.0
     subject = str(claim_subject or "").lower()
-    has_basis = any(
-        marker in subject
-        for marker in ("алимент", "несовершеннолетн", "ребен", "содержание", "вред")
-    )
-    ok, _msg = verify_deduction_percentage(str(rate_str), has_alimony_or_harm=has_basis)
+    # P1.1: основания разделены — алименты 70%, вред здоровью без потолка.
+    has_alimony, has_harm = split_deduction_basis(subject)
+    ok, _msg = verify_deduction_percentage(str(rate_str), has_alimony=has_alimony, has_harm=has_harm)
     value = parse_percentage_value(str(rate_str))
     if ok:
         return True, 100.0

@@ -578,8 +578,28 @@ class LegalDocPlatformFacade:
         )
         import hashlib
 
+        # P1.6: ключ обязан зависеть от содержимого схемы плагина и параметров
+        # предобработки изображений. Раньше ключ строился только по system_prompt
+        # и размеру payload: смена схемы (новые ограничения Правила 6) или
+        # повышение DPI не сбрасывали кэш, и старые ответы выдавались за
+        # результат новой конфигурации конвейера.
+        schema_fingerprint = ""
+        if plugin is not None:
+            try:
+                schema_file = os.path.join(str(plugin.folder_path), "schema.py")
+                with open(schema_file, "rb") as fh:
+                    schema_fingerprint = hashlib.sha256(fh.read()).hexdigest()[:16]
+            except Exception as e:
+                logger.debug(
+                    f"Не удалось получить отпечаток схемы '{doc_type}' для ключа кэша: {e}"
+                )
+        preproc = "preproc_v1"
+        for _attr in ("max_dimension", "image_quality", "pdf_dpi", "min_dimension", "enable_contrast_enhancement"):
+            preproc += f":{getattr(self.processor, _attr, '?')}"
+
         digest = hashlib.sha256(
-            f"{payload_size}:{max_pages}:{type(inputs).__name__}".encode("utf-8")
+            f"{payload_size}:{max_pages}:{type(inputs).__name__}"
+            f":{schema_fingerprint}:{preproc}".encode("utf-8")
         ).hexdigest()
         cache_key_content = f"{mode}::{file_path}{file_stat}::{digest}"
         cache_key = self.cache.compute_key(system_prompt, cache_key_content, self.model_name)
@@ -589,14 +609,34 @@ class LegalDocPlatformFacade:
         if cached_resp:
             parsed = _safe_parse_json(cached_resp)
             if parsed:
-                self.tracker.record_call(
-                    model=self.model_name,
-                    is_cache_hit=True,
-                    stage_name=f"extract_{doc_type}",
-                    doc_name=base_name
-                )
-                parsed["file_name"] = base_name
-                return parsed
+                # P1.5: кэш-хит обязан проходить ту же Pydantic-валидацию, что и
+                # свежий ответ модели. Раньше словарь из кэша возвращался как есть:
+                # нормализация строк/сумм и ограничения полей (Правило 6) к нему
+                # не применялись, а повреждённая или устаревшая запись выглядела
+                # валидным результатом.
+                schema_cls = plugin.schema_cls if plugin else UniversalDocumentDoc
+                cached_hit: Optional[Dict[str, Any]] = None
+                # P0.6 оставлял записи с schema_validated=False в кэше —
+                # старые файлы кэша могут их содержать до первого перезапуска.
+                if parsed.get("schema_validated") is not False:
+                    try:
+                        cached_hit = schema_cls.model_validate(parsed).model_dump()
+                    except Exception as e:
+                        logger.warning(
+                            f"Кэшированный ответ '{base_name}' не проходит текущую схему: {e}. "
+                            "Запись считается устаревшей — документ уходит в модель."
+                        )
+                if cached_hit is not None:
+                    if "raw_reply" in parsed and "raw_reply" not in cached_hit:
+                        cached_hit["raw_reply"] = parsed["raw_reply"]
+                    self.tracker.record_call(
+                        model=self.model_name,
+                        is_cache_hit=True,
+                        stage_name=f"extract_{doc_type}",
+                        doc_name=base_name
+                    )
+                    cached_hit["file_name"] = base_name
+                    return cached_hit
 
         # Вызов специализированной модели через RateLimiter
         self.tracker.set_stage(f"extract_{doc_type}")
@@ -740,10 +780,12 @@ class LegalDocPlatformFacade:
 
         # Валидация по схеме Pydantic (с пре-валидаторами очистки сумм и нормализации строк)
         schema_cls = plugin.schema_cls if plugin else UniversalDocumentDoc
+        schema_ok = True
         try:
             schema_instance = schema_cls.model_validate(parsed_data)
             validated_dict = schema_instance.model_dump()
         except Exception as e:
+            schema_ok = False
             logger.warning(f"Частичное несоответствие схеме ({e}), сохраняем исходные поля.")
             if isinstance(parsed_data, dict):
                 validated_dict = dict(parsed_data)
@@ -758,6 +800,12 @@ class LegalDocPlatformFacade:
         if "raw_reply" in parsed_data and "raw_reply" not in validated_dict:
             validated_dict["raw_reply"] = parsed_data["raw_reply"]
 
+        # P1.5: имя файла обязано доживать до результата так же, как на
+        # кэш-хите: схемы без поля file_name молча выбрасывали его из dump,
+        # и живой прогон терял привязку результата к документу.
+        if isinstance(parsed_data, dict) and "file_name" not in validated_dict:
+            validated_dict["file_name"] = base_name
+
         if recovered_by_regex:
             validated_dict["_recovered_by_regex"] = sorted(set(recovered_by_regex))
 
@@ -765,12 +813,20 @@ class LegalDocPlatformFacade:
         # без JSON (raw_reply) или с суммами, восстановленными регексом,
         # попадал в кэш навсегда: повторные запуски того же документа
         # возвращали мусор из кэша вместо новой попытки модели.
-        if reply_json_ok and not recovered_by_regex:
+        # P1.5: не кэшируется и ответ, не прошедший схему, — иначе кэш-хит
+        # возвращал бы данные, минующие ограничения Правила 6, вечно.
+        if reply_json_ok and not recovered_by_regex and schema_ok:
             self.cache.set(cache_key, json.dumps(validated_dict, ensure_ascii=False))
         else:
+            reasons = []
+            if not reply_json_ok:
+                reasons.append("JSON не распарсен")
+            if recovered_by_regex:
+                reasons.append("эвристика regex")
+            if not schema_ok:
+                reasons.append("схема не пройдена")
             logger.debug(
-                f"Ответ для '{base_name}' не закэширован: "
-                f"{'JSON не распарсен' if not reply_json_ok else 'эвристика regex'} — "
+                f"Ответ для '{base_name}' не закэширован: {', '.join(reasons)} — "
                 "следующий запуск обратится к модели повторно."
             )
         return validated_dict
@@ -1173,7 +1229,7 @@ class LegalDocPlatformFacade:
         grouped_files = self._batch_stage3_classify(target_files, doc_type)
         results, errors = self._batch_stage4_extract(grouped_files)
         if calculate_metrics and results:
-            self._batch_stage5_metrics(grouped_files, results, len(errors))
+            self._batch_stage5_metrics(grouped_files, results)
         self._batch_stage6_export(results)
 
         if organize_subfolders:
@@ -1317,16 +1373,18 @@ class LegalDocPlatformFacade:
         self,
         grouped_files: Dict[str, List[str]],
         results: List[Dict[str, Any]],
-        error_count: int,
     ) -> None:
         """[Этап 5/6] Расчет метрик качества и сводный отчет запуска."""
         print("\n" + "=" * 78)
         print("[Этап 5/6] Расчет метрик качества (Quality Score %) и Guardrails...")
         # Счёт по статусам результатов, а не по исключениям: документ со
         # status=FAILED возвращается штатно и раньше считался «успешным».
+        # P1.7: один источник правды — status=="FAILED". Раньше к счёту
+        # прибавлялся error_count из того же прогона: каждый сбой-исключение
+        # уже попадал в results со статусом FAILED, и «Сбоев» задваивался.
         completed = sum(1 for r in results if r.get("status") != "FAILED")
         failed = sum(1 for r in results if r.get("status") == "FAILED")
-        print(f" • Успешно обработано: {completed} | Сбоев: {failed + error_count}")
+        print(f" • Успешно обработано: {completed} | Сбоев: {failed}")
 
         all_category_metrics: Dict[str, Dict[str, Any]] = {}
         for cat_k in grouped_files:

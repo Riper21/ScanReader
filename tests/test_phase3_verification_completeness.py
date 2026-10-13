@@ -222,6 +222,30 @@ def test_c06_percentage_word_forms_are_parsed(text, expected):
     assert parse_percentage_value(text) == pytest.approx(expected, abs=0.01)
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "две трети заработка",
+        "двух третей заработка",
+        "удерживать две трети дохода",
+    ],
+)
+def test_p12_two_thirds_is_66_67_not_33_33(text):
+    """
+    P1.2: «две трети» — 66.67%, но короткое слово «трети» в словаре
+    _PERCENT_WORDS матчится первым и выдаёт 33.33%. Длинные фразы должны
+    проверяться раньше коротких.
+    """
+    assert parse_percentage_value(text) == pytest.approx(66.67, abs=0.01)
+
+
+def test_p12_two_thirds_fraction_and_word_agree():
+    """P1.2: «2/3» и «две трети» обязаны давать одинаковый процент."""
+    assert parse_percentage_value("2/3") == pytest.approx(
+        parse_percentage_value("две трети"), abs=0.01
+    )
+
+
 def test_c06_percentage_above_70_detected_in_word_form():
     ok, msg = verify_deduction_percentage("80 процентов")
     assert ok is False
@@ -239,13 +263,13 @@ def test_c06_quarter_without_alimony_is_flagged():
 
 
 def test_c06_70_percent_without_basis_is_flagged():
-    ok, msg = verify_deduction_percentage("70 процентов", has_alimony_or_harm=False)
+    ok, msg = verify_deduction_percentage("70 процентов", has_alimony=False)
     assert ok is False
     assert "50" in msg
 
 
 def test_c06_70_percent_with_alimony_is_accepted():
-    ok, _ = verify_deduction_percentage("70 процентов", has_alimony_or_harm=True)
+    ok, _ = verify_deduction_percentage("70 процентов", has_alimony=True)
     assert ok is True
 
 

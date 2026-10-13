@@ -104,14 +104,20 @@ def test_b03_math_verifier_resilience():
 
 
 def test_c15_bank_account_verification():
-    """C-15: validate_bank_account must be triggered during audit."""
+    """C-15: validate_bank_account must be triggered during audit.
+
+    P1.4: тип переведён на salary_deductions — его bank-блок в
+    verification.json указывает на живые пути схемы. Блок enforcement_orders
+    ссылался на payment_details, которого нет в схеме и промпте: проверка
+    была мёртвой в реальном конвейере.
+    """
     payload = {
         "payment_details": {
             "payment_account": "40702810000000000000",  # invalid checksum
             "bik": "044525225",  # Sberbank BIK
         }
     }
-    report = ZeroTrustAuditor.audit_document(payload, doc_type="enforcement_orders")
+    report = ZeroTrustAuditor.audit_document(payload, doc_type="salary_deductions")
     issue_codes = [i.code for i in report.issues]
     assert "INVALID_BANK_ACCOUNT" in issue_codes
     assert report.status == VerificationStatus.DISCREPANCY_DETECTED

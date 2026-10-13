@@ -124,6 +124,16 @@ class PluginSpec:
                 f"verification.json плагина '{self.folder_name}' некорректен: {'; '.join(spec_problems)}"
             )
 
+        # P1.4: пути verification.json обязаны существовать в схеме плагина.
+        # Мёртвый путь — не ошибка загрузки (плагин продолжает работать), но
+        # предупреждение: проверки по нему никогда не срабатывают, и аудит
+        # «всё проверено» становится ложным.
+        self.verification_path_warnings: List[str] = self.verification_spec.validate_paths(
+            self.schema_cls, self.folder_name
+        )
+        for warning in self.verification_path_warnings:
+            logger.warning(warning)
+
         # Нормализация и валидация benchmark.json (C-03)
         # C-06: тип поля обязан быть из известного словаряря. Раньше проверялся
         # только непустой path, поэтому «number» проходил загрузку, а оценщик его

@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+import typing
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from ..core.utils import get_logger
 
@@ -222,6 +223,102 @@ class VerificationSpec:
             if item["severity"] not in ("error", "warning", "info"):
                 problems.append(f"{plugin_id}: некорректный severity '{item['severity']}'")
         return problems
+
+    # ------------------------------------------------------------------
+    def collect_paths(self) -> List[str]:
+        """Все пути к данным, объявленные в этой спецификации."""
+        paths: List[str] = []
+        for party in self.parties:
+            for field in party["ids"]:
+                paths.append(f"{party['path']}.{field}")
+        for item in self.identifier_checks:
+            paths.append(item["path"])
+        paths.extend(self.bank.values())
+        paths.extend(self.bank_recipient_paths)
+        paths.extend(self.doc_ref_fields)
+        paths.extend(self.freeform_bank_fields)
+        for rule in self.money_rules:
+            paths.extend(rule["total"])
+            for _label, comp_paths in rule["components"]:
+                paths.extend(comp_paths)
+        if self.deduction_limit:
+            paths.append(self.deduction_limit["path"])
+            paths.extend(self.deduction_limit["basis_fields"])
+        for rule in self.chronology_rules:
+            paths.extend(rule["before"])
+            paths.extend(rule["after"])
+        for item in self.gate_fields:
+            paths.append(item["path"])
+        paths.extend(self.gate_names)
+        paths.extend(self.gate_authorities)
+        return paths
+
+    def validate_paths(self, schema_cls: Any, plugin_id: str) -> List[str]:
+        """
+        P1.4: каждый объявленный путь обязан существовать в схеме плагина.
+
+        До этого шага мёртвые пути молча выпадали из верификации: путь к
+        несуществующему полю давал get_nested_value -> None, и проверка
+        «проходила» как неприменимая. Аудит нашёл 7 таких путей в 6 плагинах.
+
+        Путь с альтернативами через «|» валиден, если резолвится хотя бы одна.
+        Возвращаются предупреждения (не ошибки): плагин продолжает работать.
+        """
+        warnings: List[str] = []
+        for path in self.collect_paths():
+            if not _path_exists_in_schema(schema_cls, path):
+                warnings.append(
+                    f"{plugin_id}: путь '{path}' из verification.json отсутствует в схеме "
+                    f"— проверки по нему никогда не срабатывают"
+                )
+        return warnings
+
+
+def _unwrap_model(annotation: Any) -> Any:
+    """Разворачивает Optional/List/Dict до вложенной Pydantic-модели."""
+    origin = typing.get_origin(annotation)
+    if origin is Union:
+        for arg in typing.get_args(annotation):
+            if arg is not type(None):
+                inner = _unwrap_model(arg)
+                if inner is not None:
+                    return inner
+        return None
+    if origin in (list, typing.List):
+        args = typing.get_args(annotation)
+        return _unwrap_model(args[0]) if args else None
+    if origin in (dict, typing.Dict):
+        args = typing.get_args(annotation)
+        return _unwrap_model(args[1]) if len(args) > 1 else None
+    if isinstance(annotation, type) and hasattr(annotation, "model_fields"):
+        return annotation
+    return None
+
+
+def _path_exists_in_schema(schema_cls: Any, path: str) -> bool:
+    """Резолвит точечный путь (с |-альтернативами) по model_fields схемы."""
+    for alternative in path.split("|"):
+        alternative = alternative.strip()
+        if not alternative:
+            continue
+        curr: Any = schema_cls
+        ok = True
+        for part in alternative.split("."):
+            fields = getattr(curr, "model_fields", None)
+            if not isinstance(fields, dict) or part not in fields:
+                ok = False
+                break
+            curr = _unwrap_model(fields[part].annotation)
+            if curr is None:
+                # Скалярный лист: дальше пути не идут. Если это последний
+                # сегмент — путь существует; если нет — путь глубже схемы.
+                if part == alternative.split(".")[-1]:
+                    return True
+                ok = False
+                break
+        if ok:
+            return True
+    return False
 
 
 _SPEC_CACHE: Dict[str, VerificationSpec] = {}

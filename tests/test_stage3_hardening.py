@@ -297,6 +297,27 @@ def test_m15_ole2_doc_returns_empty_not_mojibake(tmp_path):
     assert text == ""
 
 
+def test_p110_broken_docx_returns_empty_not_mojibake(tmp_path, monkeypatch):
+    """P1.10: повреждённый .docx не отдаёт бинарный мусор вместо текста.
+
+    Раньше XML-ветка проваливалась в _extract_text_from_plain, и
+    zip-содержимое уходило в VLM как «текст» документа.
+    """
+    import scan_reader.core.document_loader as dl
+    from scan_reader.core.document_loader import load_document
+
+    warnings = []
+    monkeypatch.setattr(dl.logger, "warning", lambda msg, *a, **k: warnings.append(str(msg)))
+
+    broken = tmp_path / "broken.docx"
+    broken.write_bytes(b"PK\x03\x04" + os.urandom(512))
+
+    title, text = load_document(str(broken))
+
+    assert text == ""
+    assert any("повреждённый" in w or "нестандартный" in w for w in warnings)
+
+
 # ---------------------------------------------------------------------------
 # M-18: recipient type
 # ---------------------------------------------------------------------------

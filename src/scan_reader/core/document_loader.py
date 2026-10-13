@@ -299,7 +299,15 @@ def _extract_text_from_docx(file_path: Path) -> str:
     except Exception as e:
         logger.warning(f"Ошибка XML-парсинга docx ({e}), резервное извлечение...")
 
-    return _extract_text_from_plain(file_path)
+    # P1.10: битый/нестандартный .docx не скармливается VLM как mojibake
+    # (образец — OLE2-ветка M-15 в _extract_text_from_doc). Раньше XML-ветка
+    # проваливалась в чтение zip-архива «как текста», и модель получала
+    # бинарный мусор вместо документа.
+    logger.warning(
+        f"Файл {file_path.name} — повреждённый или нестандартный .docx; "
+        f"текст не извлечён (требуется восстановление файла)."
+    )
+    return ""
 
 
 def _extract_text_from_doc(file_path: Path) -> str:

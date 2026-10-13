@@ -9,6 +9,7 @@
 """
 
 import io
+import json
 import logging
 import sys
 
@@ -244,6 +245,146 @@ def test_non_empty_text_layer_still_sent(tmp_path):
     assert seen.get("called") is True, "не-пустой документ не дошёл до модели"
     # Сбой связи перехватывается и превращается в FAILED, а не пробрасывается
     assert result.get("_extraction_failed") is True
+
+
+# =========================================================================
+# P1.5: кэш-хит обязан проходить Pydantic-валидацию
+# =========================================================================
+class _StubVlmClient:
+    """Модель, всегда возвращающая заданный payload в виде JSON-ответа."""
+
+    def __init__(self, payload: str):
+        self.calls = 0
+        outer = self
+
+        class _Completions:
+            @staticmethod
+            def create(**kwargs):
+                outer.calls += 1
+
+                class _Msg:
+                    content = payload
+
+                class _Choice:
+                    message = _Msg()
+
+                class _Usage:
+                    prompt_tokens = 10
+                    completion_tokens = 10
+                    total_tokens = 20
+
+                class _Resp:
+                    choices = [_Choice()]
+                    usage = _Usage()
+
+                return _Resp()
+
+        self.chat = type("chat", (), {"completions": _Completions})()
+
+
+def _tracker_sink(calls):
+    class _Tracker:
+        def record_call(self, **kw):
+            calls.append(kw)
+
+        def set_stage(self, *a, **kw):
+            pass
+
+    return _Tracker()
+
+
+def test_p15_cache_hit_goes_through_schema_validation(tmp_path):
+    """Кэшированный ответ нормализуется схемой так же, как свежий.
+
+    Раньше кэш-хит возвращал словарь «как есть»: повторный прогон того же
+    документа мог отдать ненормализованные суммы, минуя Правило 6.
+    """
+    payload = json.dumps(
+        {"doc_number": "12-К", "employee": {"full_name": "Иванов Иван", "salary_rub": "1 500"}},
+        ensure_ascii=False,
+    )
+    client = _StubVlmClient(payload)
+    f = _facade_with_text_processor({}, client=client)
+    f.cache = LLMResponseCache(cache_dir=tmp_path / "cache", enabled=True)
+    tracker_calls = []
+    f.tracker = _tracker_sink(tracker_calls)
+
+    first = f.extract_document_data(str(tmp_path / "doc.txt"), doc_type="hr_orders")
+    second = f.extract_document_data(str(tmp_path / "doc.txt"), doc_type="hr_orders")
+
+    assert client.calls == 1, "повторный прогон обязан обслуживаться из кэша"
+    assert tracker_calls[0]["is_cache_hit"] is False
+    assert tracker_calls[1]["is_cache_hit"] is True
+    # Нормализация (строка «1 500» → 1500.0) видна в обоих результатах
+    assert first["employee"]["salary_rub"] == 1500.0
+    assert second["employee"]["salary_rub"] == 1500.0
+    assert first == second
+
+
+def test_p15_schema_invalid_response_is_not_cached(tmp_path):
+    """Ответ, не прошедший схему, не кэшируется: кэш не должен закреплять мусор."""
+    payload = json.dumps({"employee": {"salary_rub": "-500"}}, ensure_ascii=False)
+    client = _StubVlmClient(payload)
+    f = _facade_with_text_processor({}, client=client)
+    f.cache = LLMResponseCache(cache_dir=tmp_path / "cache", enabled=True)
+    tracker_calls = []
+    f.tracker = _tracker_sink(tracker_calls)
+
+    first = f.extract_document_data(str(tmp_path / "bad.txt"), doc_type="hr_orders")
+    second = f.extract_document_data(str(tmp_path / "bad.txt"), doc_type="hr_orders")
+
+    # Оба прогона уходили в модель: невалидный по схеме ответ в кэш не попал
+    assert client.calls == 2
+    assert first.get("schema_validated") is False
+    assert second.get("schema_validated") is False
+    # Правило 6: сумма не молчит и не обнуляется — отрицательное значение
+    # дошло до ограничения ge=0 (в ошибке видно input_value=-500.0) и
+    # сохранилось в результате для оператора как есть
+    assert second["employee"]["salary_rub"] == "-500"
+
+
+# =========================================================================
+# P1.6: ключ кэша зависит от схемы плагина и параметров предобработки
+# =========================================================================
+def test_p16_preproc_parameter_change_invalidates_cache(tmp_path):
+    """Смена параметров предобработки (DPI/качество) обязана сбрасывать кэш:
+    на вход модели попадают другие изображения, старый ответ недействителен."""
+    payload = json.dumps({"doc_number": "1"}, ensure_ascii=False)
+    client = _StubVlmClient(payload)
+    f = _facade_with_text_processor({}, client=client)
+    f.cache = LLMResponseCache(cache_dir=tmp_path / "cache", enabled=True)
+    f.tracker = _tracker_sink([])
+
+    f.extract_document_data(str(tmp_path / "doc.txt"), doc_type="hr_orders")
+    f.processor.pdf_dpi = 300
+    f.extract_document_data(str(tmp_path / "doc.txt"), doc_type="hr_orders")
+
+    assert client.calls == 2, "новые параметры предобработки обязаны давать cache miss"
+
+
+def test_p16_schema_change_invalidates_cache(tmp_path, monkeypatch):
+    """Правка schema.py плагина обязана сбрасывать кэш: нормализация и
+    ограничения Полей поменялись, старые ответы больше не эквивалентны."""
+    from scan_reader.type_registry import get_registry
+
+    plugin_dir = tmp_path / "plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "schema.py").write_text("# schema v1", encoding="utf-8")
+
+    plugin = get_registry().plugins["hr_orders"]
+    monkeypatch.setattr(plugin, "folder_path", plugin_dir)
+
+    payload = json.dumps({"doc_number": "1"}, ensure_ascii=False)
+    client = _StubVlmClient(payload)
+    f = _facade_with_text_processor({}, client=client)
+    f.cache = LLMResponseCache(cache_dir=tmp_path / "cache2", enabled=True)
+    f.tracker = _tracker_sink([])
+
+    f.extract_document_data(str(tmp_path / "doc.txt"), doc_type="hr_orders")
+    (plugin_dir / "schema.py").write_text("# schema v2: добавлены ограничения", encoding="utf-8")
+    f.extract_document_data(str(tmp_path / "doc.txt"), doc_type="hr_orders")
+
+    assert client.calls == 2, "изменение схемы обязано давать cache miss"
 
 
 # =========================================================================

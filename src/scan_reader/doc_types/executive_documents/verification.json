@@ -1,11 +1,11 @@
 {
   "_comment": "Исполнительный лист. Основной документ принудительного исполнения.",
   "parties": [
-    {"path": "claimant", "label": "взыскатель", "ids": ["inn", "ogrn"]},
-    {"path": "debtor", "label": "должник", "ids": ["inn", "ogrn"]}
+    {"path": "claimant", "label": "взыскатель", "ids": ["inn"]},
+    {"path": "debtor", "label": "должник", "ids": ["inn"]}
   ],
   "identifier_checks": [],
-  "doc_ref_fields": ["blank_number", "base_doc_number"],
+  "doc_ref_fields": ["blank_number"],
   "money_rules": [
     {
       "code": "WRIT_MATH_DISCREPANCY",
@@ -42,7 +42,6 @@
     {"path": "claimant.inn", "min_length": 10},
     {"path": "debtor.inn", "min_length": 10},
     {"path": "court.name", "min_length": 5},
-    {"path": "court.case_number", "min_length": 5},
     {"path": "case_number", "min_length": 5},
     {"path": "blank_number", "min_length": 5}
   ],

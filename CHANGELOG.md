@@ -6,6 +6,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.5] - 2026-10-13
+
+Zero-trust invariants (phase P1 of the multi-agent audit): statutory
+deduction ceilings, dead verification paths, cache honesty and schema
+form constraints.
+
+### Fixed
+
+- Deduction ceilings (Art. 99 229-FZ): harm-to-health compensation was
+  lumped with alimony into one "raised basis" flag and subjected to a
+  70% ceiling that does not exist for it (Federal Law 314-FZ of
+  06.03.2019). `split_deduction_basis()` returns two independent flags
+  (alimony / harm) consumed by the auditor, guardrails and metrics
+  evaluator; the Art. 138 Labor Code 20%-of-total-income limit is
+  checked as a separate rule (`verify_tk138_ceiling`).
+- `parse_percentage_value`: word fractions matched shortest-first, so
+  "две трети" was read as 33.33% ("трети") instead of 66.67%.
+  Longest-first matching fixes overlimit detection for "2/3 заработка".
+- The auditor silently dropped identifiers shorter than 9 digits and
+  accounts without a BIK; the report now says the value was not
+  verified (`UNREADABLE_IDENTIFIER`, `ACCOUNT_WITHOUT_BIK`) instead of
+  implying a pass.
+- Dead verification paths removed across plugins:
+  `executive_documents` (court act/issue dates, blank document
+  reference), `legal_claims` (bank block points to the structured
+  `bank_requisites` object with BIK/account key checks; flat columns
+  follow), `powers_of_attorney` (agent INN/SNILS identifiers, gate by
+  passport number and full name). A test scans every plugin for
+  verification paths missing from its schema.
+- Cache honesty: a cache hit is re-validated through the plugin schema
+  (stale entries saved before validation are skipped); replies that
+  fail JSON/schema validation are never written to the cache, and the
+  live path logs the reason when caching is refused; `file_name`
+  survives `model_dump()` for schemas without the field.
+- The cache key now includes a fingerprint of the plugin's `schema.py`
+  and the preprocessing parameters (DPI, max dimension, quality,
+  contrast), so schema or preprocessing changes invalidate old entries.
+- Batch metrics counted failures twice (the stage-5 header used
+  `len(errors)` while counting `FAILED` results); the number now comes
+  from the results themselves. A money rule with `severity: error`
+  actually breaks `validation_passed` (the assignment was a no-op
+  identity).
+- `legal_claims`: the money rule accepted a single component
+  (min_components=1), letting one recovered amount "reconcile" with
+  itself; now two.
+- Schema form constraints (Rule 6): hr_orders employee INN inherits
+  the party-mixin checksum, employee/organization INN and SNILS form;
+  УПД line-item and total amounts are `ge=0`; commercial contract
+  OGRN (13/15 digits); power-of-attorney agent SNILS; executive blank
+  series/number form. Empty values pass; unreadable ones fail loudly.
+- Broken `.docx`: the XML fallback read the zip archive "as text" and
+  fed binary mojibake to the VLM. It now returns empty text with a
+  warning (same contract as OLE2 `.doc`).
+
+### Tests
+
+715 tests (was 689): P1.1–P1.10 regression coverage — harm-to-health
+without a ceiling, word-fraction percentages, unreadable identifiers,
+dead verification paths across all 9 plugins, cache re-validation and
+invalidation, stage-5 failure counting, form constraints, broken docx.
+
 ## [0.9.4] - 2026-10-13
 
 Post-audit hardening (phase P0 of the multi-agent audit): silent
