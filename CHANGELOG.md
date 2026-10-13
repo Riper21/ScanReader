@@ -192,6 +192,28 @@ README_EN.md.
   code 3 now says «кросс-модальный гейт», consistent with the rest of
   the documentation.
 
+PyMuPDF module name (follow-up): the codebase migrates from the legacy
+`fitz` alias to the canonical `pymupdf` module ahead of its removal.
+
+### Changed
+
+- All imports of the legacy `fitz` alias (the module was renamed to
+  `pymupdf` in 1.24.3, and since 1.28.2 importing `fitz` prints a
+  deprecation warning) were replaced with the canonical `pymupdf`
+  module: `file_processor` (both PDF render paths), `facade`
+  (text-layer extraction for audit), `core.ocr`, the `fitz` entry of
+  the doctor's core-dependency check, the PDF fixture tests, the
+  adversarial corpus generator and the Windows install script's smoke
+  import. The dependency floor is now `pymupdf>=1.24.3` (the first
+  release shipping the canonical module name). No API changes: `open`,
+  `Matrix`, `get_pixmap`, `tobytes`, `page_count`, `load_page`,
+  `get_text` are identical under the canonical name. On Python 3.9 pip
+  resolves 1.26.5 (the last release supporting 3.9); on Python 3.10+
+  it resolves 1.26.6+ up to 1.28.2, where importing the alias would
+  already warn — the migration removes that future breakage. The SWIG
+  `__module__`-attribute DeprecationWarnings emitted by `pymupdf.mupdf`
+  in the 1.26.5 wheels are unrelated to the alias and stay visible.
+
 ## [0.9.5] - 2026-10-13
 
 Zero-trust invariants (phase P1 of the multi-agent audit): statutory

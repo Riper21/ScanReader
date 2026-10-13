@@ -321,8 +321,8 @@ def build_multi_page_pdf(
     Нужен для проверки лимита страниц: если лимит 20, а реквизиты на 30-й
     странице, извлечение их не увидит.
     """
-    fitz = _require_fitz()
-    doc = fitz.open()
+    pymupdf = _require_pymupdf()
+    doc = pymupdf.open()
     lines = list(key_lines) if key_lines else ["ИНН должника 7707083893",
                                               "Итого к удержанию: 53500,00 руб."]
     key_page = key_page or pages
@@ -341,9 +341,9 @@ def build_multi_page_pdf(
     return path
 
 
-def _require_fitz():
+def _require_pymupdf():
     try:
-        import fitz
-        return fitz
+        import pymupdf
+        return pymupdf
     except ImportError as e:  # pragma: no cover
         raise RuntimeError("PyMuPDF обязателен для генерации многостраничных PDF") from e

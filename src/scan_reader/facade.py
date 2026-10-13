@@ -255,9 +255,9 @@ class LegalDocPlatformFacade:
             elif ext == ".pdf":
                 doc = None
                 try:
-                    import fitz
+                    import pymupdf
 
-                    doc = fitz.open(file_path)
+                    doc = pymupdf.open(file_path)
                     text = "\n".join(page.get_text() for page in doc)
                     return text if text.strip() else None
                 except Exception as e:

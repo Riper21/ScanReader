@@ -223,15 +223,15 @@ class FileProcessor:
         data_uris = []
         last_error: Optional[Exception] = None
 
-        # 1. Попытка через PyMuPDF (fitz)
+        # 1. Попытка через PyMuPDF (модуль pymupdf)
         try:
-            import fitz
-            doc = fitz.open(file_path)
+            import pymupdf
+            doc = pymupdf.open(file_path)
             try:
                 total_pages = len(doc)
                 pages_to_render = min(total_pages, max_pages) if max_pages else total_pages
                 zoom = self.pdf_dpi / 72.0
-                mat = fitz.Matrix(zoom, zoom)
+                mat = pymupdf.Matrix(zoom, zoom)
                 for page_num in range(pages_to_render):
                     page = doc[page_num]
                     pix = page.get_pixmap(matrix=mat, alpha=False)
@@ -294,12 +294,12 @@ class FileProcessor:
 
         elif ext in SUPPORTED_PDF_EXTS:
             try:
-                import fitz
-                doc = fitz.open(file_path)
+                import pymupdf
+                doc = pymupdf.open(file_path)
                 try:
                     page = doc[0]
                     zoom = self.pdf_dpi / 72.0
-                    mat = fitz.Matrix(zoom, zoom)
+                    mat = pymupdf.Matrix(zoom, zoom)
                     pix = page.get_pixmap(matrix=mat, alpha=False)
                     img = Image.open(io.BytesIO(pix.tobytes("jpeg")))
                     return "vision_dual_zone", self.extract_dual_zone_uris(img)

@@ -138,7 +138,7 @@ def run_diagnostics(verbose: bool = False, check_vlm: bool = True) -> Dict[str, 
         "ground_truth_dir_exists": os.path.isdir(gt_dir),
     }
 
-    core_deps = ("pydantic", "openai", "PIL", "fitz", "openpyxl", "dotenv")
+    core_deps = ("pydantic", "openai", "PIL", "pymupdf", "openpyxl", "dotenv")
     # P3.2: pandas исключён из зависимостей (0 импортов); docx остаётся
     # в optional, потому что конвейер DOCX деградирует мягко.
     optional_deps = ("docx",)

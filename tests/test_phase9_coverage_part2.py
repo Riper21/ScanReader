@@ -386,12 +386,12 @@ def test_dual_zone_text_mode_for_plain_text(tmp_path):
 
 def test_process_pdf_file_renders_pages(tmp_path):
     """Рендер PDF через PyMuPDF — ранее не покрывался вовсе."""
-    fitz = pytest.importorskip("fitz")
+    pymupdf = pytest.importorskip("pymupdf")
 
     from scan_reader.file_processor import FileProcessor
 
     path = tmp_path / "doc.pdf"
-    doc = fitz.open()
+    doc = pymupdf.open()
     for _ in range(2):
         page = doc.new_page()
         page.insert_text((72, 100), "Test page content")
@@ -491,11 +491,11 @@ def test_ocr_pdf_prefers_native_text_layer(monkeypatch, tmp_path):
     Текст латиницей: встроенный шрифт PyMuPDF не содержит кириллицы и
     подставляет точки, что делает проверку бессмысленной.
     """
-    fitz = pytest.importorskip("fitz")
+    pymupdf = pytest.importorskip("pymupdf")
     from scan_reader.core import ocr as ocr_mod
 
     path = tmp_path / "text.pdf"
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page()
     native = "Ready-made text layer of the document, long enough to be trusted"
     page.insert_text((72, 100), native)

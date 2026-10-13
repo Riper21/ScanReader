@@ -52,7 +52,7 @@ if %ERRORLEVEL% neq 0 (
 
 echo.
 echo • Шаг 3/3: Верификация установленных модулей...
-%PY_CMD% -c "import pydantic, openai, fitz, PIL, openpyxl, docx, docx2txt, dotenv; print('   [OK] Все ключевые модули успешно загружены!')"
+%PY_CMD% -c "import pydantic, openai, pymupdf, PIL, openpyxl, docx, docx2txt, dotenv; print('   [OK] Все ключевые модули успешно загружены!')"
 if %ERRORLEVEL% neq 0 (
     echo [ВНИМАНИЕ] Некоторые модули не прошли тест импорта.
 ) else (

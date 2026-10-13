@@ -239,7 +239,7 @@ class OcrEngine:
     def _pdf_to_text(self, file_path: str, limit: int) -> str:
         """Постраничный OCR PDF. Предпочитает текстовый слой, если он есть."""
         try:
-            import fitz
+            import pymupdf
         except ImportError:
             raise OcrUnavailable("PyMuPDF (pymupdf) обязателен для OCR PDF") from None
 
@@ -247,7 +247,7 @@ class OcrEngine:
 
         chunks: List[str] = []
         try:
-            doc = fitz.open(file_path)
+            doc = pymupdf.open(file_path)
         except Exception as e:
             raise OcrUnavailable(f"Не удалось открыть PDF '{file_path}': {e}") from e
 

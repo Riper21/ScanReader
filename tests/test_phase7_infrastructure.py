@@ -413,8 +413,8 @@ def test_pdf_handle_closed_on_error(monkeypatch, tmp_path):
         def close(self):
             closed["value"] = True
 
-    fake_fitz = type("F", (), {"open": staticmethod(lambda p: _Doc())})
-    monkeypatch.setitem(sys.modules, "fitz", fake_fitz)
+    fake_pymupdf = type("F", (), {"open": staticmethod(lambda p: _Doc())})
+    monkeypatch.setitem(sys.modules, "pymupdf", fake_pymupdf)
 
     f = LegalDocPlatformFacade.__new__(LegalDocPlatformFacade)
     f._client = None
