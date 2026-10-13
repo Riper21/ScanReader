@@ -99,8 +99,10 @@ def test_stage5_does_not_write_metrics_xlsx(tmp_path, capsys):
 # =========================================================================
 # MCP export_results: документ грузится один раз
 # =========================================================================
-def test_mcp_export_results_no_double_count(tmp_path):
+def test_mcp_export_results_no_double_count(tmp_path, monkeypatch):
     """Раньше _Full/_raw/карточка грузились как три разных документа."""
+    # P2.3/H-20: export_results проверяет whitelist путей.
+    monkeypatch.setenv("SCANREADER_ALLOWED_DIRS", str(tmp_path))
     from scan_reader.mcp.server import ScanReaderMCPServer
 
     out = str(tmp_path)

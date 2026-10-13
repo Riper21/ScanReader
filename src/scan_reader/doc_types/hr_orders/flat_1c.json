@@ -1,0 +1,13 @@
+{
+  "_comment": "P2.1: маппинг «колонка плоской записи 1С ← путь в модели». Альтернативы через '|': берётся первое непустое. У приказа по личному составу сторонами выступают организация и работник, суммой — оклад.",
+  "columns": [
+    {"column": "DocDate", "path": "doc_date", "kind": "date"},
+    {"column": "DocNumber", "path": "doc_number", "kind": "text"},
+    {"column": "ClaimantName", "path": "organization_name", "kind": "text"},
+    {"column": "ClaimantInn", "path": "organization_inn", "kind": "text"},
+    {"column": "DebtorName", "path": "employee.full_name", "kind": "text"},
+    {"column": "DebtorInn", "path": "employee.inn", "kind": "text"},
+    {"column": "ClaimSubject", "path": "order_type", "kind": "text"},
+    {"column": "TotalAmountRub", "path": "employee.salary_rub", "kind": "number"}
+  ]
+}

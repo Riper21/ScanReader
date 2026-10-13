@@ -12,7 +12,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 from ..core.utils import as_dict as _as_dict, get_logger
 from .checksums import clean_digits, validate_bik, validate_inn, validate_ogrn, validate_snils, validate_bank_account
 from .chronology import parse_flexible_date
-from .hallucination_gate import audit_cross_modal_consistency
+from .hallucination_gate import audit_cross_modal_consistency, MIN_REFERENCE_LENGTH
 from .math_verifier import (
     parse_percentage_value,
     split_deduction_basis,
@@ -194,37 +194,60 @@ class ZeroTrustAuditor:
         # и is_valid=True — статус прямо противоречил содержимому отчёта.
         if raw_ocr_text:
             discrepancies = audit_cross_modal_consistency(data, raw_ocr_text, spec)
-            if discrepancies:
-                for disc in discrepancies:
-                    issues.append(
-                        VerificationIssue(
-                            severity="error",
-                            code="HALLUCINATION_RISK",
-                            message=disc["reason"],
-                            field_name=disc["field"],
-                        )
-                    )
-                details["hallucination_discrepancies"] = discrepancies
-            details["gate_executed"] = True
-            details["gate_source"] = gate_source or "text_layer"
-            if details["gate_source"] == "vlm_transcription":
-                # Эталон получен той же моделью, что и извлечение, поэтому ошибки
-                # распознавания неотделимы от ошибок извлечения: это НЕ независимая
-                # сверка. Гейт полезен (ловит правки и склейки реквизитов), но его
-                # результат нельзя предъявлять как подтверждение исходным текстом.
+            gate_too_short = bool(discrepancies) and discrepancies[0].get(
+                "reason"
+            ) == "GATE_REFERENCE_TOO_SHORT"
+            if gate_too_short:
+                # P2.8: эталон непуст, но короче MIN_REFERENCE_LENGTH символов —
+                # сверка невыполнима. Раньше гейт возвращал пустой список, и
+                # здесь ставился gate_executed=True: «проверка пройдена» там,
+                # где сверяться было не с чем (Правило 8).
+                details["gate_executed"] = False
+                details["gate_source"] = gate_source or "text_layer"
                 details["gate_independent"] = False
+                details["gate_expected"] = gate_expected
                 issues.append(
                     VerificationIssue(
                         "warning",
-                        "GATE_REFERENCE_FROM_VLM",
-                        "Эталон гейта получен VLM-транскрипцией, а не независимым OCR: "
-                        "ошибки распознавания неотделимы от ошибок извлечения. "
-                        "Для независимой сверки установите extra [ocr].",
+                        "GATE_REFERENCE_TOO_SHORT",
+                        f"Эталон сверки короче {MIN_REFERENCE_LENGTH} символов: "
+                        "кросс-модальная проверка невыполнима и не считается "
+                        "выполненной. Реквизиты не подтверждены исходным текстом.",
                         "gate",
                     )
                 )
             else:
-                details["gate_independent"] = True
+                if discrepancies:
+                    for disc in discrepancies:
+                        issues.append(
+                            VerificationIssue(
+                                severity="error",
+                                code="HALLUCINATION_RISK",
+                                message=disc["reason"],
+                                field_name=disc["field"],
+                            )
+                        )
+                    details["hallucination_discrepancies"] = discrepancies
+                details["gate_executed"] = True
+                details["gate_source"] = gate_source or "text_layer"
+                if details["gate_source"] == "vlm_transcription":
+                    # Эталон получен той же моделью, что и извлечение, поэтому ошибки
+                    # распознавания неотделимы от ошибок извлечения: это НЕ независимая
+                    # сверка. Гейт полезен (ловит правки и склейки реквизитов), но его
+                    # результат нельзя предъявлять как подтверждение исходным текстом.
+                    details["gate_independent"] = False
+                    issues.append(
+                        VerificationIssue(
+                            "warning",
+                            "GATE_REFERENCE_FROM_VLM",
+                            "Эталон гейта получен VLM-транскрипцией, а не независимым OCR: "
+                            "ошибки распознавания неотделимы от ошибок извлечения. "
+                            "Для независимой сверки установите extra [ocr].",
+                            "gate",
+                        )
+                    )
+                else:
+                    details["gate_independent"] = True
         else:
             # Отсутствие эталона фиксируется явно: раньше молчаливый пропуск гейта давал
             # zero_trust_verified, хотя кросс-модальная сверка не выполнялась вовсе.
@@ -513,9 +536,11 @@ class ZeroTrustAuditor:
         if limit:
             value = get_nested_value(data, limit["path"])
             if value is not None and str(value).strip().lower() not in _EMPTY_STRINGS:
+                # P2.1: дефолт ["claim_subject"] удалён — ядро не знает имён
+                # полей. Плагин без basis_fields проверяет общий потолок.
                 basis = " ".join(
                     str(get_nested_value(data, p) or "")
-                    for p in (limit["basis_fields"] or ["claim_subject"])
+                    for p in (limit.get("basis_fields") or [])
                 ).lower()
                 # P1.1: основания разделены — «вред» больше не попадает в
                 # 70%-ветку алиментов: для вреда здоровью потолка нет вовсе.
@@ -555,7 +580,7 @@ class ZeroTrustAuditor:
                     "error",
                     rule["code"],
                     f"Нечисловой итог ({rule.get('doc_hint') or 'финансовый блок'}): {total_raw!r}",
-                    total_path or "finances",
+                    total_path or str(rule.get("total", "")),
                 )
             )
             return True
@@ -582,7 +607,7 @@ class ZeroTrustAuditor:
                     rule["code"],
                     f"Нечисловые слагаемые ({rule.get('doc_hint') or 'финансовый блок'}): "
                     f"{', '.join(unparsable)}",
-                    total_path or "finances",
+                    total_path or str(rule.get("total", "")),
                 )
             )
             return True
@@ -603,7 +628,7 @@ class ZeroTrustAuditor:
                     rule["code"],
                     f"{breakdown} = {expected:.2f}, что не совпадает с итогом {total_val:.2f} "
                     f"(расхождение {abs(expected - total_val):.2f} руб.){hint}",
-                    total_path or "finances",
+                    total_path or str(rule.get("total", "")),
                 )
             )
         return True

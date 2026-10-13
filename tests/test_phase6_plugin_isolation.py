@@ -17,7 +17,13 @@ import pytest
 from scan_reader.type_registry import PluginSpec, get_registry
 from scan_reader.verifier import VerificationStatus
 from scan_reader.verifier.auditor import ZeroTrustAuditor as A
-from scan_reader.verifier.spec import VerificationSpec, get_nested_value, resolve_spec
+from scan_reader.verifier.spec import (
+    VerificationSpec,
+    get_nested_value,
+    path_is_declared,
+    resolve_spec,
+    set_nested_value,
+)
 
 REPO = Path(__file__).resolve().parent.parent
 DOC_TYPES = REPO / "src" / "scan_reader" / "doc_types"
@@ -35,20 +41,38 @@ FORBIDDEN_IN_CORE = [
     "debt_amount_rub", "fee_penalty_rub", "principal_debt_rub",
     "blank_number", "base_doc_number", "ip_number", "reg_number",
     "total_claim_rub", "total_rub_no_vat",
+    # P2.2: финансовый восстановитель и flat-экспорт тоже декларативны.
+    "claim_subject", "total_rub", "finances", "court_fee_rub",
+    "main_debt_rub", "debt_amount_rub", "total_deduction_rub",
+    "court_costs_rub",
 ]
 
-#: Файлы ядра, которые по определению не знают о типах документов.
-CORE_MODULES = [
-    "src/scan_reader/verifier/auditor.py",
-    "src/scan_reader/verifier/hallucination_gate.py",
-    "src/scan_reader/verifier/status.py",
-    "src/scan_reader/verifier/checksums.py",
-    "src/scan_reader/verifier/chronology.py",
-    "src/scan_reader/verifier/math_verifier.py",
-]
+#: Словарь ИНТЕРПРЕТАТОРА, а не поля документов. Интерпретатору разрешено
+#: знать роли банковского блока и категории сумм финансового сканера
+#: (finance_parser): конкретные пути к этим категориям задаёт плагин
+#: в verification.json (блок recovery).
+INTERPRETER_VOCABULARY = {
+    "uin", "rosp_code", "oktmo", "bik", "kpp", "account",
+    "total_rub", "main_debt_rub", "court_fee_rub", "penalty_rub",
+}
 
-#: Лексика банковского блока принадлежит интерпретатору (spec.py), а не документу.
-INTERPRETER_VOCABULARY = {"uin", "rosp_code", "oktmo", "bik", "kpp", "account"}
+
+def _core_modules():
+    """P2.2: к верификатору добавлены facade, реестр и весь core/."""
+    modules = [
+        "src/scan_reader/facade.py",
+        "src/scan_reader/type_registry.py",
+    ]
+    modules.extend(
+        str(p.relative_to(REPO)).replace("\\", "/") for p in sorted((REPO / "src" / "scan_reader" / "core").glob("*.py"))
+    )
+    modules.extend(
+        str(p.relative_to(REPO)).replace("\\", "/") for p in sorted((REPO / "src" / "scan_reader" / "verifier").glob("*.py"))
+    )
+    return modules
+
+
+CORE_MODULES = _core_modules()
 
 
 def _quoted_tokens(text):
@@ -293,3 +317,153 @@ def test_empty_placeholder_is_treated_as_absent():
     value, path = _first_alternative(data, ["doc_date", "ip_number"])
     assert value == "98765/23/50026-ИП"
     assert path == "ip_number"
+
+
+# =========================================================================
+# P2.1: декларативный финансовый восстановитель (recovery)
+# =========================================================================
+def test_recovery_declaration_parses_and_validates():
+    spec = VerificationSpec({
+        "recovery": {
+            "total_fields": ["fin.total"],
+            "fields": [
+                {"path": "fin.total", "source": "total_rub", "always": True},
+                {"path": "fin.debt", "source": "main_debt_rub", "fallback_source": "total_rub"},
+            ],
+        }
+    })
+    assert spec.recovery["total_fields"] == ["fin.total"]
+    by_path = {rule["path"]: rule for rule in spec.recovery["fields"]}
+    assert by_path["fin.total"]["always"] is True
+    assert by_path["fin.debt"]["fallback_source"] == "total_rub"
+    assert by_path["fin.debt"]["always"] is False
+    assert not spec.validate("demo"), spec.validate("demo")
+
+
+@pytest.mark.parametrize("recovery, fragment", [
+    (
+        {"recovery": {"fields": [{"path": "a", "source": "not_a_category"}]}},
+        "not_a_category",
+    ),
+    (
+        {"recovery": {"fields": [{"path": "a", "source": "total_rub", "fallback_source": "bogus"}]}},
+        "fallback_source",
+    ),
+    (
+        {"recovery": {
+            "total_fields": ["missing_path"],
+            "fields": [{"path": "a", "source": "total_rub"}],
+        }},
+        "total_fields",
+    ),
+])
+def test_recovery_declaration_rejects_unknown_sources(recovery, fragment):
+    """Опечатка в категории сканера не должна молча отключать восстановление."""
+    spec = VerificationSpec(recovery)
+    problems = spec.validate("demo")
+    assert problems and fragment in " ".join(problems), spec.validate("demo")
+
+
+def test_recovery_paths_are_covered_by_dead_path_check():
+    """P1.4: пути recovery попадают в collect_paths и проверяются по схеме."""
+    spec = VerificationSpec({
+        "recovery": {
+            "total_fields": ["fin.total"],
+            "fields": [
+                {"path": "fin.total", "source": "total_rub", "always": True},
+                {"path": "fin.debt", "source": "main_debt_rub"},
+            ],
+        }
+    })
+    collected = spec.collect_paths()
+    assert "fin.total" in collected
+    assert "fin.debt" in collected
+
+
+def test_set_nested_value_writes_first_declared_alternative():
+    data: dict = {}
+    set_nested_value(data, "fin.total|fin.sum", 5)
+    assert data == {"fin": {"total": 5}}
+
+    declared = {"fin": {"sum": None}}
+    set_nested_value(declared, "fin.total|fin.sum", 7)
+    assert declared["fin"]["sum"] == 7 and "total" not in declared["fin"]
+
+    # Некорректные входы не роняют восстановитель (Правило 1)
+    set_nested_value(None, "a.b", 1)
+    set_nested_value({}, "", 1)
+
+
+def test_path_is_declared_distinguishes_empty_from_absent():
+    data = {"a": None, "b": ""}
+    assert path_is_declared(data, "a") is True
+    assert path_is_declared(data, "b") is True
+    assert path_is_declared(data, "c") is False
+    assert path_is_declared(data, "x|c") is False
+    assert path_is_declared(data, "x|a") is True
+
+
+# =========================================================================
+# P2.1: плоская запись 1С из деклараций плагина
+# =========================================================================
+def test_flat_1c_declarations_resolve_against_schemas():
+    """Все declared пути flat_1c.json обязаны существовать в схеме плагина."""
+    registry = get_registry(force_reload=True)
+    assert not registry.load_errors, registry.load_errors
+    offenders = {
+        pid: p.flat_1c_path_warnings
+        for pid, p in registry.enabled().items()
+        if p.flat_1c_path_warnings
+    }
+    assert not offenders, offenders
+
+
+def test_salary_plugin_wires_custom_flat_builder():
+    """Кастомный сборщик подключён манифестом, а не веткой в ядре."""
+    plugin = get_registry().get("salary_deductions")
+    assert callable(plugin.flat_1c_builder)
+    # У остальных плагинов сборка идёт по flat_1c.json без кастомного кода
+    others = [
+        pid for pid, p in get_registry().enabled().items()
+        if pid != "salary_deductions"
+    ]
+    assert others and all(
+        get_registry().get(pid).flat_1c_builder is None for pid in others
+    )
+
+
+def test_flat_1c_declaration_rejects_unknown_kind(tmp_path):
+    """Опечатка в kind ловится при загрузке, а не в продакшене у 1С."""
+    plugin_dir = tmp_path / "bad_flat"
+    plugin_dir.mkdir()
+    for name in ("manifest.json", "schema.py", "prompt.md", "classifier_rules.json",
+                 "flat_columns.json", "benchmark.json", "autonomous.json"):
+        shutil.copy(DOC_TYPES / "commercial_contracts" / name, plugin_dir / name)
+    manifest = json.loads((plugin_dir / "manifest.json").read_text(encoding="utf-8"))
+    manifest["id"] = "bad_flat"
+    (plugin_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (plugin_dir / "flat_1c.json").write_text(
+        json.dumps({"columns": [{"column": "DocNumber", "path": "doc_number", "kind": "phone"}]}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError) as exc:
+        PluginSpec(str(plugin_dir))
+    assert "phone" in str(exc.value)
+
+
+def test_flat_1c_missing_column_or_path_is_rejected(tmp_path):
+    plugin_dir = tmp_path / "bad_flat2"
+    plugin_dir.mkdir()
+    for name in ("manifest.json", "schema.py", "prompt.md", "classifier_rules.json",
+                 "flat_columns.json", "benchmark.json", "autonomous.json"):
+        shutil.copy(DOC_TYPES / "commercial_contracts" / name, plugin_dir / name)
+    manifest = json.loads((plugin_dir / "manifest.json").read_text(encoding="utf-8"))
+    manifest["id"] = "bad_flat2"
+    (plugin_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (plugin_dir / "flat_1c.json").write_text(
+        json.dumps({"columns": [{"kind": "text"}]}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError) as exc:
+        PluginSpec(str(plugin_dir))
+    assert "column" in str(exc.value) or "path" in str(exc.value)

@@ -6,6 +6,78 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Plugin isolation in core (phase P2 of the multi-agent audit, Rule 3 of
+AGENTS.md): the pipeline, verifier and exporter stop knowing document
+field names; the salary-specific flat-1C builder moves into its plugin.
+
+### Changed
+
+- `core.json_exporter.convert_to_flat_1c` no longer hardcodes field
+  resolution chains per document type (and the `salary_deductions`
+  special case). The 1C exchange format (PascalCase columns and their
+  types) stays in the core; which model paths fill each column is
+  declared by each plugin in the new optional `flat_1c.json`. The
+  salary deduction builder lives in `doc_types/salary_deductions/`
+  (`flat_1c.convert`, wired through the manifest `flat_1c_builder` key)
+  and reuses the interpreter helpers exported by the core.
+- The financial recovery fallback in the facade is declarative: sources
+  and fill order come from the `recovery` block of the plugin's
+  `verification.json` (`RECOVERY_SOURCES` categories in
+  `verifier/spec.py`), replacing hardcoded `fin_obj` logic.
+- The universal-fallback prompt and `UniversalDocumentDoc` schema moved
+  from the facade to `doc_types/universal.py`.
+- The auditor and guardrails resolve the deduction-limit basis paths
+  from the plugin verification spec instead of the default
+  `claim_subject`.
+- The MCP server no longer hardcodes the document-type enum (it is
+  built from the plugin registry), runs a single audit per scan (the
+  duplicate audit block is gone), requires `doc_type` for
+  `verify_legal_data`, and applies the `SCANREADER_ALLOWED_DIRS`
+  whitelist to every tool that touches paths (`run_benchmark`,
+  `export_results`).
+- VLM timeouts are split: `VLM_HTTP_TIMEOUT` (request, default 600) vs
+  `VLM_SLOT_TIMEOUT` (limiter wait, default 120), the old `VLM_TIMEOUT`
+  kept as a deprecated alias; router replies below
+  `VLM_ROUTER_CONFIDENCE_MIN` (default 0.5) classify as unknown
+  instead of a wrong type; token telemetry is broken down by modality
+  (text/vision).
+- Classifier text markers are narrowed to document-specific phrases
+  (bare «должник», «оклад», «претензия», «покупатель» etc. no longer
+  hijack routing); heuristic keyword (0.90) and text-marker (0.92)
+  hits became non-final hypotheses confirmed or refuted by the VLM
+  router, while path-pattern hits (0.95) remain final.
+- `_safe_parse_json` iterates ALL markdown blocks (the first block may
+  be model commentary), scans balanced `{...}` objects one at a time,
+  converts NaN/Infinity to None and takes the first object of an
+  array-of-objects reply.
+- Token tracker summaries are cumulative and survive deque eviction;
+  the rate limiter raises RuntimeError on nested `with` (it used to
+  silently eat a second concurrency slot); `parse_russian_currency`
+  rejects bare 9/11-digit numbers (BIK/SNILS); the account-key mismatch
+  marker is a Pydantic PrivateAttr and is logged as a warning;
+  `percent_field` enforces 0..100.
+- A non-empty but short (< 20 chars) gate reference yields
+  `GATE_REFERENCE_TOO_SHORT` with `gate_executed=false` instead of a
+  silent empty-list pass.
+
+### Tests
+
+788 tests (was 715): the plugin-isolation scanner now scans the facade,
+guardrails, exporter and auditor for forbidden field-name tokens with
+an interpreter vocabulary exemption; flat-1C column declarations are
+schema-validated per plugin; recovery declarations and their sources
+are validated at load; the deduction-limit basis is resolved from the
+plugin spec; the MCP server is covered by path-whitelist, single-audit
+and registry-enum tests; the VLM router confidence floor, timeout split
+and per-modality telemetry are pinned; the classifier table covers 16
+marker documents, 6 negative generic-word cases and router confirmation;
+`_safe_parse_json` handles multi-block, array, NaN and multi-object
+replies; the token tracker survives deque eviction; the rate limiter
+rejects nested `with`; a short gate reference yields
+`GATE_REFERENCE_TOO_SHORT` instead of a silent pass.
+
 ## [0.9.5] - 2026-10-13
 
 Zero-trust invariants (phase P1 of the multi-agent audit): statutory

@@ -122,11 +122,12 @@ def test_mcp_scan_document_end_to_end(mcp_server, tmp_path, monkeypatch):
 
     result = mcp_server.call_tool("scan_document", {"file_path": str(scan)})
     assert result["status"] in ("COMPLETED", "NEEDS_REVIEW")
-    assert "zero_trust_report" in result
-    assert result["zero_trust_report"]["status"]
+    assert result["zero_trust"]["status"]
 
 
-def test_mcp_scan_document_without_verification(mcp_server, tmp_path, monkeypatch):
+def test_mcp_scan_document_has_single_audit_report(mcp_server, tmp_path, monkeypatch):
+    """P2.3: отчёт Zero-Trust приходит из фасада; дубля под ключом
+    zero_trust_report больше не существует."""
     scan = tmp_path / "o2.jpg"
     Image.new("L", (400, 500), color=200).save(scan)
     facade = mcp_server.facade
@@ -135,10 +136,9 @@ def test_mcp_scan_document_without_verification(mcp_server, tmp_path, monkeypatc
     monkeypatch.setattr(facade, "_reference_text_for_gate", lambda p: (None, "none"))
     monkeypatch.setattr(facade, "_get_client", lambda: None)
 
-    result = mcp_server.call_tool(
-        "scan_document", {"file_path": str(scan), "verify_zero_trust": False}
-    )
+    result = mcp_server.call_tool("scan_document", {"file_path": str(scan)})
     assert "zero_trust_report" not in result
+    assert result["zero_trust"]["status"]
 
 
 def test_mcp_scan_document_rejects_missing_file(mcp_server):
@@ -255,3 +255,44 @@ def test_mcp_export_results(mcp_server, tmp_path):
 def test_mcp_unknown_tool(mcp_server):
     result = mcp_server.call_tool("no_such_tool", {})
     assert result.get("isError") is True
+
+
+def test_mcp_run_benchmark_rejects_path_outside_allowed_roots(mcp_server, tmp_path):
+    """P2.3/H-20: run_benchmark обязан проверять whitelist, а не только scan."""
+    outside = tmp_path.parent / "чужие-эталоны"
+    outside.mkdir(exist_ok=True)
+    try:
+        result = mcp_server.call_tool("run_benchmark", {"ground_truth_path": str(outside)})
+        assert result.get("isError") is True
+        assert "Access denied" in result["error"]
+    finally:
+        outside.rmdir()
+
+
+def test_mcp_export_results_rejects_path_outside_allowed_roots(mcp_server, tmp_path):
+    """P2.3/H-20: export_results обязан проверять whitelist (запись файлов!)."""
+    outside = tmp_path.parent / "чужие-результаты"
+    outside.mkdir(exist_ok=True)
+    try:
+        result = mcp_server.call_tool("export_results", {"results_dir": str(outside)})
+        assert result.get("isError") is True
+        assert "Access denied" in result["error"]
+    finally:
+        outside.rmdir()
+
+
+def test_mcp_verify_legal_data_requires_doc_type(mcp_server):
+    """P2.3: дефолт doc_type не зашит в MCP-слой — тип обязан указать вызывающий."""
+    result = mcp_server.call_tool("verify_legal_data", {"data": {"doc_number": "1"}})
+    assert result.get("isError") is True
+    assert "doc_type" in result["error"]
+
+
+def test_mcp_tool_list_enum_from_plugin_registry(mcp_server):
+    """P2.3: enum типов документов строится из реестра (9 плагинов), не зашит."""
+    tools = {t["name"]: t for t in mcp_server.list_tools()}
+    enum = tools["scan_document"]["inputSchema"]["properties"]["doc_type"]["enum"]
+    assert enum[0] == "auto"
+    assert "hr_orders" in enum
+    assert "enforcement_orders" in enum
+    assert len(enum) == 10

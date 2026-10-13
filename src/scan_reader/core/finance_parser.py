@@ -63,12 +63,14 @@ def parse_russian_currency(val: Any) -> Optional[float]:
     # 1. Удаление поясняющего текста прописью в скобках: (сто тысяч рублей ...)
     text_clean = re.sub(r"\([^)]*\)", "", text).strip()
 
-    # Если валютный маркер отсутствует, отклоняем идентификаторы (ИНН, ОГРН, СНИЛС, номера дел)
+    # Если валютный маркер отсутствует, отклоняем идентификаторы (ИНН, ОГРН, СНИЛС, БИК, номера дел)
     if not has_currency:
         if re.search(r"\b(?:инн|кпп|огрн|огрнип|снилс|бик|л/с|р/с|дело|паспорт|№)\b", text_clean, flags=re.IGNORECASE):
             return None
+        # P2.7: 9 цифр — БИК, 11 — СНИЛС. Раньше они не отбивались и
+        # «044525225» превращалось в сумму 44,5 млн руб.
         digits_only = re.sub(r"\D", "", text_clean)
-        if len(digits_only) in (10, 12, 13, 15) and len(text_clean.split()) <= 2:
+        if len(digits_only) in (9, 10, 11, 12, 13, 15) and len(text_clean.split()) <= 2:
             return None
 
     # 2. Обработка формата "X руб. Y коп." или "X рублей Y копеек"

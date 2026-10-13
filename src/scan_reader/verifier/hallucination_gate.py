@@ -313,7 +313,16 @@ def audit_cross_modal_consistency(
         doc_type экстракции, которого здесь нет, поэтому передаётся вызывающим.
     """
     if not raw_text or len(raw_text.strip()) < MIN_REFERENCE_LENGTH:
-        return []  # Нет эталона для сверки
+        # P2.8: раньше здесь молча возвращался [], и вызывающий (аудитор)
+        # ставил gate_executed=True — «проверка пройдена» там, где
+        # сверяться было не с чем. Короткий эталон — невыполнимая сверка,
+        # а не отсутствие находок (Правила 1 и 8).
+        return [{
+            "field": "gate",
+            "extracted_value": None,
+            "reason": "GATE_REFERENCE_TOO_SHORT",
+            "gate_executed": False,
+        }]
     if not isinstance(extracted_data, dict):
         return []
 

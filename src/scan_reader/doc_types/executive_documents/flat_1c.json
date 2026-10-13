@@ -1,0 +1,16 @@
+{
+  "_comment": "P2.1: маппинг «колонка плоской записи 1С ← путь в модели». Альтернативы через '|': берётся первое непустое. Формат записи (имена колонок и типы) знает ядро; это объявление решает, какие пути его заполняют.",
+  "columns": [
+    {"column": "DocDate", "path": "doc_date|issue_date|act_date|court.issue_date", "kind": "date"},
+    {"column": "DocNumber", "path": "doc_number|case_number", "kind": "text"},
+    {"column": "CourtOrAuthority", "path": "court.name", "kind": "text"},
+    {"column": "ClaimantName", "path": "claimant.name", "kind": "text"},
+    {"column": "ClaimantInn", "path": "claimant.inn", "kind": "text"},
+    {"column": "DebtorName", "path": "debtor.name", "kind": "text"},
+    {"column": "DebtorInn", "path": "debtor.inn", "kind": "text"},
+    {"column": "ClaimSubject", "path": "claim_subject", "kind": "text"},
+    {"column": "DebtAmountRub", "path": "finances.debt_amount_rub|finances.main_debt_rub", "kind": "number"},
+    {"column": "CourtFeeRub", "path": "finances.court_fee_rub|finances.fee_penalty_rub", "kind": "number"},
+    {"column": "TotalAmountRub", "path": "finances.total_rub", "kind": "number"}
+  ]
+}

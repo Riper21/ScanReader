@@ -203,10 +203,14 @@ def test_launcher_symbols_and_sanitize_filename():
 def test_salary_1c_target_conversion_and_export(tmp_path):
     """Проверка полного соответствия формируемого JSON эталону 1С из скриншота."""
     from scan_reader.core.json_exporter import (
-        convert_salary_to_target_1c,
         save_single_document_json,
         export_consolidated_registries
     )
+    from scan_reader.type_registry import get_plugin
+
+    # P2.1: кастомный сборщик плоской 1С-записи живёт в плагине
+    # salary_deductions и подключён через manifest «flat_1c_builder».
+    convert_salary_to_target_1c = get_plugin("salary_deductions").flat_1c_builder
 
     sample = {
         "file_name": "nmc5o05g.pdf",
@@ -305,7 +309,10 @@ def test_salary_1c_target_conversion_and_export(tmp_path):
 
 def test_salary_1c_dates_not_duplicated_and_fallback_regex():
     """Тест исключения дублирования дат и работы фолбэка парсинга основания."""
-    from scan_reader.core.json_exporter import convert_salary_to_target_1c
+    from scan_reader.type_registry import get_plugin
+
+    # P2.1: сборщик перенесён из ядра в плагин (manifest «flat_1c_builder»).
+    convert_salary_to_target_1c = get_plugin("salary_deductions").flat_1c_builder
 
     # Случай 1: Наличие только текстовой строки base_doc (фолбэк парсинг даты и номера)
     doc_with_raw_base = {

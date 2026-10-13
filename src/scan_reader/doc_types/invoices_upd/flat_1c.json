@@ -1,0 +1,13 @@
+{
+  "_comment": "P2.1: маппинг «колонка плоской записи 1С ← путь в модели». Альтернативы через '|': берётся первое непустое. У УПД нет предмета взыскания и госпошлины — соответствующие колонки остаются пустыми.",
+  "columns": [
+    {"column": "DocDate", "path": "doc_date", "kind": "date"},
+    {"column": "DocNumber", "path": "doc_number", "kind": "text"},
+    {"column": "ClaimantName", "path": "seller.name", "kind": "text"},
+    {"column": "ClaimantInn", "path": "seller.inn", "kind": "text"},
+    {"column": "DebtorName", "path": "buyer.name", "kind": "text"},
+    {"column": "DebtorInn", "path": "buyer.inn", "kind": "text"},
+    {"column": "DebtAmountRub", "path": "finances.total_rub_no_vat", "kind": "number"},
+    {"column": "TotalAmountRub", "path": "finances.total_rub", "kind": "number"}
+  ]
+}

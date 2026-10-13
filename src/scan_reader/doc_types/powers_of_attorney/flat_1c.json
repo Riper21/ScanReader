@@ -1,0 +1,12 @@
+{
+  "_comment": "P2.1: маппинг «колонка плоской записи 1С ← путь в модели». Альтернативы через '|': берётся первое непустое. Денежных полей у доверенности нет — суммы остаются пустыми.",
+  "columns": [
+    {"column": "DocDate", "path": "doc_date|issue_date", "kind": "date"},
+    {"column": "DocNumber", "path": "doc_number", "kind": "text"},
+    {"column": "ClaimantName", "path": "principal.name", "kind": "text"},
+    {"column": "ClaimantInn", "path": "principal.inn", "kind": "text"},
+    {"column": "DebtorName", "path": "agent.full_name|agent.name", "kind": "text"},
+    {"column": "DebtorInn", "path": "agent.inn", "kind": "text"},
+    {"column": "ClaimSubject", "path": "powers_summary", "kind": "text"}
+  ]
+}

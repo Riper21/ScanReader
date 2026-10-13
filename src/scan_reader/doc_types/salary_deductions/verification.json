@@ -58,5 +58,13 @@
     {"path": "doc_number", "min_length": 3}
   ],
   "gate_names": ["debtor_name", "claimant_name"],
-  "gate_authorities": ["authority.name"]
+  "gate_authorities": ["authority.name"],
+  "recovery": {
+    "_comment": "P2.1: резервное восстановление сумм. Итог удержания восстанавливаем всегда; задолженность — только если модель объявила поле, но оставила его пустым.",
+    "total_fields": ["finances.total_deduction_rub", "finances.debt_amount_rub"],
+    "fields": [
+      {"path": "finances.total_deduction_rub", "source": "total_rub", "always": true},
+      {"path": "finances.debt_amount_rub", "source": "main_debt_rub", "fallback_source": "total_rub"}
+    ]
+  }
 }

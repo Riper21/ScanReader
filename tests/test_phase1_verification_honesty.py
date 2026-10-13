@@ -188,6 +188,21 @@ def test_c02_gate_not_executed_when_reference_unavailable():
     assert any(i.code == "GATE_NOT_EXECUTED" for i in report.issues)
 
 
+def test_c02_short_reference_is_not_a_passed_gate():
+    """P2.8: непустой, но короткий эталон — гейт НЕ выполнен: раньше
+    gate_executed=True молча ставился поверх пустого списка находок."""
+    report = ZeroTrustAuditor.audit_document(spec=_spec(), data=_fully_consistent_doc(),
+        doc_type="salary_deductions",
+        raw_ocr_text="шапка",
+        gate_source="text_layer",
+        gate_expected=True,
+    )
+    assert report.details["gate_executed"] is False
+    assert report.details["gate_source"] == "text_layer"
+    assert any(i.code == "GATE_REFERENCE_TOO_SHORT" for i in report.issues)
+    assert report.status == VerificationStatus.GATE_NOT_EXECUTED
+
+
 def test_c02_standalone_verify_without_document_is_normal():
     """Аудит готового JSON без документа — штатный случай, не отказ."""
     report = ZeroTrustAuditor.audit_document(spec=_spec(), data=_fully_consistent_doc(), doc_type="salary_deductions"

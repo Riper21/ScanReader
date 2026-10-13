@@ -32,6 +32,16 @@ def test_parse_russian_currency_variations():
     assert parse_russian_currency("0.00 руб") == 0.0
 
 
+def test_parse_russian_currency_rejects_identifier_sized_numbers():
+    """P2.7: числа без валюты длиной 9-15 цифр — идентификаторы (БИК 9,
+    СНИЛС 11), а не суммы: 9 и 11 цифр раньше парсились как деньги."""
+    assert parse_russian_currency("044525225") is None       # БИК, 9 цифр
+    assert parse_russian_currency("11223344595") is None     # СНИЛС, 11 цифр
+    assert parse_russian_currency("7707083893") is None      # ИНН, 10 цифр
+    # С валютным маркером то же число — законная сумма
+    assert parse_russian_currency("044525225 руб.") == 44525225.0
+
+
 def test_extract_amounts_from_judicial_text():
     sample_text = (
         "Суд постановил: взыскать с ООО 'Должник' в пользу ПАО 'Сбербанк' "

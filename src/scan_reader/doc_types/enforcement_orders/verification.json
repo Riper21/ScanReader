@@ -37,5 +37,14 @@
     {"path": "court.case_number", "min_length": 5}
   ],
   "gate_names": ["claimant.name", "debtor.name"],
-  "gate_authorities": ["fssp.name", "court.name"]
+  "gate_authorities": ["fssp.name", "court.name"],
+  "recovery": {
+    "_comment": "P2.1: резервное восстановление сумм. Итог восстанавливаем всегда; долг и судебные расходы — только в объявленные, но пустые поля. Судебные расходы восстанавливаются категорией court_fee_rub: сканер не различает пошлину и издержки.",
+    "total_fields": ["finances.total_rub"],
+    "fields": [
+      {"path": "finances.total_rub", "source": "total_rub", "always": true},
+      {"path": "finances.main_debt_rub", "source": "main_debt_rub", "fallback_source": "total_rub"},
+      {"path": "finances.court_costs_rub", "source": "court_fee_rub"}
+    ]
+  }
 }

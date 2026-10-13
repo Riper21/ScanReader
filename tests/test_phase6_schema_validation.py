@@ -387,6 +387,49 @@ def test_salary_bank_blank_fields_are_none_not_error():
     assert pd2.bik == "015004950" and pd2.payment_account == "03212643000000015113"
 
 
+def test_account_key_marker_is_private_attr_and_warned():
+    """
+    P2.7: маркер несходимости ключа счёта — приватный атрибут Pydantic,
+    не ручная запись в __dict__: он не попадает в сериализацию модели и
+    не выглядит полем. Несходимость дублируется предупреждением в лог.
+    """
+    import logging as _logging
+
+    import scan_reader.core.fields as fields_module
+
+    model = _payment_model()
+    # Пара с заведомо неверным ключом (валидный по форме БИК + 20 цифр)
+    pd = model(bik="044525225", payment_account="40817810000000000001")
+
+    assert getattr(pd, "_account_key_unverified", None) is not None
+    # PrivateAttr не попадает в дамп и не является полем модели
+    assert "_account_key_unverified" not in pd.model_dump()
+    assert "_account_key_unverified" not in pd.__dict__
+    assert "_account_key_unverified" not in model.model_fields
+
+    # Предупреждение пишется через логгер core.fields
+    class _Collector(_logging.Handler):
+        def __init__(self):
+            super().__init__()
+            self.records: list = []
+
+        def emit(self, record):
+            self.records.append(record)
+
+    collector = _Collector()
+    fields_logger = fields_module._logger
+    old_level = fields_logger.level
+    fields_logger.setLevel(_logging.WARNING)
+    fields_logger.addHandler(collector)
+    try:
+        model(bik="044525225", payment_account="40817810000000000001")
+    finally:
+        fields_logger.removeHandler(collector)
+        fields_logger.setLevel(old_level)
+
+    assert any("ключ" in str(r.getMessage()).lower() for r in collector.records)
+
+
 def test_salary_blank_recipient_inn_is_none_not_error():
     """Тот же паттерн на recipient_inn/recipient_kpp: str + ""->None = падение."""
     model = _payment_model()

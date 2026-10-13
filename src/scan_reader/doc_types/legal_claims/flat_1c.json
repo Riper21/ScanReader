@@ -1,0 +1,15 @@
+{
+  "_comment": "P2.1: маппинг «колонка плоской записи 1С ← путь в модели». Альтернативы через '|': берётся первое непустое.",
+  "columns": [
+    {"column": "DocDate", "path": "doc_date", "kind": "date"},
+    {"column": "DocNumber", "path": "doc_number", "kind": "text"},
+    {"column": "ClaimantName", "path": "sender.name", "kind": "text"},
+    {"column": "ClaimantInn", "path": "sender.inn", "kind": "text"},
+    {"column": "DebtorName", "path": "recipient.name", "kind": "text"},
+    {"column": "DebtorInn", "path": "recipient.inn", "kind": "text"},
+    {"column": "ClaimSubject", "path": "claim_subject", "kind": "text"},
+    {"column": "DebtAmountRub", "path": "finances.principal_debt_rub", "kind": "number"},
+    {"column": "CourtFeeRub", "path": "finances.penalty_rub|finances.interest_rub", "kind": "number"},
+    {"column": "TotalAmountRub", "path": "finances.total_claim_rub", "kind": "number"}
+  ]
+}

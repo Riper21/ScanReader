@@ -23,7 +23,8 @@ class LLMCallRecord:
         latency_sec: float = 0.0,
         is_cache_hit: bool = False,
         stage_name: str = "extraction",
-        doc_name: str = ""
+        doc_name: str = "",
+        modality: str = "text",
     ):
         self.model = model
         self.prompt_tokens = prompt_tokens
@@ -33,6 +34,10 @@ class LLMCallRecord:
         self.is_cache_hit = is_cache_hit
         self.stage_name = stage_name
         self.doc_name = doc_name
+        # P2.4: модальность вызова ("vision" — с изображениями, "text" — только
+        # текст) нужна для честной телеметрии: стоимость и латентность режимов
+        # несопоставимы, сваливать их в одну кучу нельзя.
+        self.modality = modality if modality in ("text", "vision") else "text"
         self.tokens_per_sec = (
             round(completion_tokens / latency_sec, 2)
             if latency_sec > 0 and completion_tokens > 0
@@ -53,6 +58,12 @@ class TokenUsageTracker:
         self._total_calls: int = 0
         self._total_prompt_tokens: int = 0
         self._total_completion_tokens: int = 0
+        # P2.7: сводка строилась по остатку deque — после 5000 записей
+        # старые вытеснялись, и цифры молча занижались (Правило 8).
+        self._total_latency_sec: float = 0.0
+        self._total_cache_hits: int = 0
+        self._stage_totals: Dict[str, Dict[str, float]] = {}
+        self._modality_totals: Dict[str, int] = {}
 
     @classmethod
     def get_tracker(cls) -> "TokenUsageTracker":
@@ -75,7 +86,8 @@ class TokenUsageTracker:
         latency_sec: float = 0.0,
         is_cache_hit: bool = False,
         stage_name: Optional[str] = None,
-        doc_name: str = ""
+        doc_name: str = "",
+        modality: str = "text",
     ) -> None:
         """Регистрирует метрики выполнения запроса."""
         with self._lock:
@@ -91,22 +103,41 @@ class TokenUsageTracker:
                 latency_sec=latency_sec,
                 is_cache_hit=is_cache_hit,
                 stage_name=stage,
-                doc_name=doc_name
+                doc_name=doc_name,
+                modality=modality,
             )
             self._total_calls += 1
             self._total_prompt_tokens += prompt_tokens
             self._total_completion_tokens += completion_tokens
+            self._total_latency_sec += latency_sec
+            if is_cache_hit:
+                self._total_cache_hits += 1
+            stage_stat = self._stage_totals.setdefault(
+                stage, {"calls": 0, "total_tokens": 0, "latency_sec": 0.0}
+            )
+            stage_stat["calls"] += 1
+            stage_stat["total_tokens"] += record.total_tokens
+            stage_stat["latency_sec"] += latency_sec
+            self._modality_totals[record.modality] = (
+                self._modality_totals.get(record.modality, 0) + 1
+            )
             self.records.append(record)
 
     def get_summary(self) -> Dict[str, Any]:
-        """Возвращает агрегированную сводку потребления токенов."""
+        """
+        Возвращает агрегированную сводку потребления токенов.
+
+        P2.7: сводка считается по кумулятивным счетчикам, а не по остатку
+        deque: записи вытесняются при переполнении, и прежняя арифметика
+        занижала бы реальные затраты после 5000 вызовов.
+        """
         with self._lock:
-            total_calls = len(self.records)
-            prompt_tokens = sum(r.prompt_tokens for r in self.records)
-            completion_tokens = sum(r.completion_tokens for r in self.records)
-            total_tokens = sum(r.total_tokens for r in self.records)
-            total_latency = sum(r.latency_sec for r in self.records)
-            cache_hits = sum(1 for r in self.records if r.is_cache_hit)
+            total_calls = self._total_calls
+            prompt_tokens = self._total_prompt_tokens
+            completion_tokens = self._total_completion_tokens
+            total_tokens = prompt_tokens + completion_tokens
+            total_latency = self._total_latency_sec
+            cache_hits = self._total_cache_hits
             real_calls = total_calls - cache_hits
 
             avg_speed = (
@@ -120,15 +151,19 @@ class TokenUsageTracker:
                 else 0.0
             )
 
-            # Разбивка по этапам
-            by_stage: Dict[str, Dict[str, Any]] = {}
-            for r in self.records:
-                st = r.stage_name
-                if st not in by_stage:
-                    by_stage[st] = {"calls": 0, "total_tokens": 0, "latency_sec": 0.0}
-                by_stage[st]["calls"] += 1
-                by_stage[st]["total_tokens"] += r.total_tokens
-                by_stage[st]["latency_sec"] += r.latency_sec
+            # Разбивка по этапам (кумулятивно, P2.7)
+            by_stage: Dict[str, Dict[str, Any]] = {
+                st: {
+                    "calls": int(stat["calls"]),
+                    "total_tokens": int(stat["total_tokens"]),
+                    "latency_sec": float(stat["latency_sec"]),
+                }
+                for st, stat in self._stage_totals.items()
+            }
+
+            # P2.4: разбивка по модальности (text/vision), кумулятивно
+            by_modality: Dict[str, int] = {"text": 0, "vision": 0}
+            by_modality.update(self._modality_totals)
 
             return {
                 "total_calls": total_calls,
@@ -140,7 +175,8 @@ class TokenUsageTracker:
                 "total_latency_sec": round(total_latency, 2),
                 "avg_latency_sec": avg_latency,
                 "avg_speed_tokens_per_sec": avg_speed,
-                "by_stage": by_stage
+                "by_stage": by_stage,
+                "by_modality": by_modality,
             }
 
     def print_summary(self) -> None:
@@ -166,6 +202,10 @@ class TokenUsageTracker:
             self._total_calls = 0
             self._total_prompt_tokens = 0
             self._total_completion_tokens = 0
+            self._total_latency_sec = 0.0
+            self._total_cache_hits = 0
+            self._stage_totals = {}
+            self._modality_totals = {}
 
     @property
     def total_calls(self) -> int:

@@ -9,6 +9,13 @@
    с которым сливаются одиночные прогоны (C-07) и из которого собирается Excel.
 3. Атомарное инкрементальное сохранение чекпоинтов (.checkpoint_{doc_type}.json).
 
+P2.1 (Правило 3): ядро знает только ФОРМАТ обмена 1С — фиксированный набор
+PascalCase-колонок плоской записи и правила их типов. КАКИЕ пути документа
+заполняют эти колонки — объявление плагина flat_1c.json. Кастомную сборку
+(например, постановления об обращении взыскания на зарплату с платежными
+реквизитами и кодами РОСП) плагин подключает через manifest
+«flat_1c_builder»: «модуль.функция».
+
 До 0.9.3 писались также {file_stem}_raw.json, {file_stem}_{doc_type}.json,
 1C_Импорт/{file_stem}_1c.json, реестры по типам, salary_deductions_registry_1c.json,
 all_documents_registry.json и Registry_Flat.json. Из них первые три были
@@ -21,15 +28,12 @@ import re
 import json
 import time
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
-from .utils import as_dict as _as_dict, get_logger, sanitize_filename
+from .utils import get_logger, sanitize_filename
 from .io_utils import write_atomic
 
 logger = get_logger("json_exporter")
-
-
-# as_dict импортируется из .utils как _as_dict (Фаза 8.6: было три копии).
 
 
 def format_to_iso_date(date_str: Any) -> str:
@@ -176,131 +180,134 @@ def determine_recipient_type(recipient: str = "", account: str = "") -> str:
     return "Individual"
 
 
-def convert_salary_to_target_1c(doc_or_wrapper: Dict[str, Any], default_db_code: int = 10) -> Dict[str, Any]:
+#: P2.1 (Правило 3): схема плоской записи 1С — это ФОРМАТ обмена, а не поля
+#: документов. Ядро знает имена колонок и их типы; соответствие «путь в
+#: модели → колонка» объявляет плагин в flat_1c.json.
+_FLAT_1C_TEXT_COLUMNS = (
+    "DocTypeTitle",
+    "DocDate",
+    "DocNumber",
+    "CourtOrAuthority",
+    "ClaimantName",
+    "ClaimantInn",
+    "PartyOneName",
+    "PartyOneInn",
+    "DebtorName",
+    "DebtorInn",
+    "PartyTwoName",
+    "PartyTwoInn",
+    "ClaimSubject",
+)
+_FLAT_1C_NUMBER_COLUMNS = ("DebtAmountRub", "CourtFeeRub", "TotalAmountRub")
+_FLAT_1C_ROLE_MIRRORS = (
+    ("PartyOneName", "ClaimantName"),
+    ("PartyOneInn", "ClaimantInn"),
+    ("PartyTwoName", "DebtorName"),
+    ("PartyTwoInn", "DebtorInn"),
+)
+
+
+def _cast_flat_value(raw: Any, kind: str) -> Any:
+    """Приводит значение к типу колонки (kind из flat_1c.json плагина)."""
+    if kind == "number":
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return None
+    if kind == "date":
+        return format_to_iso_date(raw)
+    if kind == "boolean":
+        return bool(raw)
+    return str(raw)
+
+
+def _first_non_empty(data: Dict[str, Any], path: str) -> Any:
     """
-    Преобразует извлеченный документ (или обертку с метаданными и ключом 'data')
-    в целевой плоский формат JSON для автоматического создания документа
-    (например, 'Исполнительный лист' в 1C:ЗУП / учетной системе).
-    
-    Результат строго соответствует спецификации целевого JSON (19 полей PascalCase в алфавитном порядке).
+    Первое непустое значение по |-альтернативам пути.
+
+    Отличие от verifier.spec.get_nested_value: та возвращает первую
+    существующую (non-None) альтернативу, даже если её значение — пустая
+    строка. Плоской записи нужна семантика старых or-цепочек: «пусто —
+    попробуй следующую».
     """
-    if isinstance(doc_or_wrapper, dict) and "Bik" in doc_or_wrapper and "DbCode" in doc_or_wrapper:
-        return dict(doc_or_wrapper)
+    from ..verifier.spec import get_nested_value
 
-    if isinstance(doc_or_wrapper, dict) and "data" in doc_or_wrapper and isinstance(doc_or_wrapper["data"], dict):
-        data = doc_or_wrapper["data"]
-    elif isinstance(doc_or_wrapper, dict):
-        data = doc_or_wrapper
-    else:
-        data = {}
+    for alternative in (path or "").split("|"):
+        alternative = alternative.strip()
+        if not alternative:
+            continue
+        value = get_nested_value(data, alternative)
+        if value is not None and str(value).strip() not in ("", "None", "null", "nan"):
+            return value
+    return None
 
-    authority = _as_dict(data.get("authority"))
-    employer = _as_dict(data.get("employer"))
-    finances = _as_dict(data.get("finances"))
-    payment_details: Any = _as_dict(data.get("payment_details"))
 
-    # Если передан объект модели Pydantic
-    if hasattr(payment_details, "model_dump"):
-        payment_details = payment_details.model_dump()
-    elif hasattr(payment_details, "dict"):
-        payment_details = payment_details.dict()
+def convert_to_flat_1c(doc_item: Dict[str, Any], default_db_code: int = 10) -> Dict[str, Any]:
+    """
+    Универсальное преобразование документа любого типа в плоский (Flat) JSON для 1С и учетных систем.
 
-    # Сбор текстовых блоков для fallback regex-парсинга
-    text_blobs = [
-        finances.get("periodic_details", ""),
-        data.get("claimant_details", ""),
-        data.get("debtor_details", ""),
-        data.get("notes", ""),
-        authority.get("address", ""),
-        data.get("claim_subject", "")
-    ]
-    regex_attrs = extract_payment_attributes_from_texts(text_blobs)
+    Порядок разрешения:
+    1. Уже готовая запись (Bik + DbCode) — дословный passthrough.
+    2. Плагин с кастомным сборщиком (manifest «flat_1c_builder»).
+    3. Универсальная сборка: метаданные + стандартные колонки формата 1С,
+       заполненные путями из flat_1c.json плагина.
 
-    # Платежные реквизиты (приоритет: явные поля payment_details -> regex фолбэк)
-    bik = payment_details.get("bik") or regex_attrs.get("bik") or ""
-    payment_account = payment_details.get("payment_account") or regex_attrs.get("payment_account") or ""
-    recipient_inn = payment_details.get("recipient_inn") or regex_attrs.get("recipient_inn") or ""
-    recipient_kpp = payment_details.get("recipient_kpp") or regex_attrs.get("recipient_kpp") or ""
-    oktmo = payment_details.get("oktmo") or regex_attrs.get("oktmo") or ""
-    uin = payment_details.get("uin") or regex_attrs.get("uin") or ""
+    Исключает вложенные словари. Даты приводятся к ISO (YYYY-MM-DD), суммы — к числам.
+    """
+    doc_type = str(doc_item.get("doc_type", "unknown") or "unknown")
+    if "Bik" in doc_item and "DbCode" in doc_item:
+        return dict(doc_item)
 
-    # Получатель платежа
-    recipient = payment_details.get("recipient") or ""
-    if not recipient:
-        combined_text = " ".join(text_blobs)
-        m_rec = re.search(r"(?:получател[ьяе]|в пользу)[\s:]*([^\n;,\.]{5,100}\([^)]+\)|УФК[^\n;,]{5,80})", combined_text, re.IGNORECASE)
-        if m_rec:
-            recipient = m_rec.group(1).strip()
-        elif authority.get("name"):
-            recipient = f"УФК ({authority.get('name')})"
-
-    # Даты и номера документов
-    # 1. ResolutionDate: дата вынесения постановления пристава
-    doc_date = data.get("doc_date") or data.get("act_date") or ""
-    resolution_iso_date = format_to_iso_date(doc_date)
-
-    # 2. ExecutiveDocumentDate и ExecutiveDocumentNumber: первичный исполнительный документ
-    base_doc = str(data.get("base_doc") or "").strip()
-    base_attrs = extract_base_doc_attributes(base_doc)
-
-    exec_date_raw = data.get("base_doc_date") or base_attrs.get("date") or ""
-    exec_doc_iso_date = format_to_iso_date(exec_date_raw) if exec_date_raw else ""
-
-    exec_number_raw = (
-        data.get("base_doc_number")
-        or base_attrs.get("number")
-        or data.get("doc_number")
-        or data.get("ip_number")
-        or ""
-    )
-
-    # Ведомственный код РОСП
-    rosp_code = extract_rosp_full_code(
-        ip_number=data.get("ip_number", ""),
-        doc_number=data.get("doc_number", ""),
-        text_blobs=text_blobs,
-        explicit_code=payment_details.get("rosp_code", "")
-    )
-
-    # Тип платежа и тип получателя
-    claim_subject = data.get("claim_subject", "")
-    pay_type = determine_pay_type(claim_subject, data.get("notes", ""))
-    recipient_type = determine_recipient_type(recipient, payment_account)
-
-    db_code_val = data.get("db_code") or doc_or_wrapper.get("db_code") or default_db_code
+    plugin = None
     try:
-        db_code = int(db_code_val)
-    except (ValueError, TypeError):
-        db_code = default_db_code
+        # Лениво: иначе получался бы цикл «реестр → сборщик плагина → ядро».
+        from ..type_registry import get_registry
 
-    # Строго в алфавитном порядке ключей PascalCase
-    target_dict = {
-        "Bik": str(bik),
-        "DbCode": db_code,
-        "ExecutiveDocumentDate": exec_doc_iso_date,
-        "ExecutiveDocumentNumber": str(exec_number_raw),
-        "FSSP_Head": str(authority.get("name", "")),
-        "Oktmo": str(oktmo),
-        "OrganizationName": str(employer.get("name", "")),
-        "PaymentAccount": str(payment_account),
-        "PayType": pay_type,
-        "PurposeType": "ExecutiveProduction",
-        "Recipient": str(recipient),
-        "RecipientInn": str(recipient_inn),
-        "RecipientKpp": str(recipient_kpp),
-        "RecipientType": recipient_type,
-        "ResolutionDate": resolution_iso_date,
-        "RospAddressFakt": str(authority.get("address", "")),
-        "RospBailiffFio": str(authority.get("officer", "")),
-        "RospFullCode": str(rosp_code),
-        "Uin": str(uin)
+        plugin = get_registry().get(doc_type)
+    except Exception as exc:  # noqa: BLE001 — экспорт не имеет права упасть
+        logger.warning("Реестр типов недоступен при сборке плоской записи: %s", exc)
+
+    if plugin is not None and plugin.flat_1c_builder is not None:
+        return plugin.flat_1c_builder(doc_item, default_db_code)
+
+    data_val: Any = doc_item.get("data")
+    data: Dict[str, Any] = data_val if isinstance(data_val, dict) else doc_item
+
+    flat_dict: Dict[str, Any] = {
+        "FileName": str(doc_item.get("file_name") or ""),
+        "DocType": doc_type,
+        "DocTypeTitle": str(doc_item.get("doc_type_title") or ""),
     }
+    for column in _FLAT_1C_TEXT_COLUMNS:
+        flat_dict[column] = ""
+    for column in _FLAT_1C_NUMBER_COLUMNS:
+        flat_dict[column] = None
 
-    # Признаки верификации обязаны попадать в запись для 1С: бухгалтер должен
-    # видеть, что документ проверялся и требовал ли он ручного подтверждения.
+    for col in (plugin.flat_1c_columns if plugin is not None else []):
+        name = str(col.get("column", "")).strip()
+        if not name:
+            continue
+        raw = _first_non_empty(data, str(col.get("path", "")))
+        if raw is None:
+            continue
+        flat_dict[name] = _cast_flat_value(raw, str(col.get("kind", "text")))
+
+    # Стороны дублируются в двух написаниях (Claimant*/PartyOne*): формат
+    # обмена 1С допускает оба, потребители читают кто какое.
+    for target, source in _FLAT_1C_ROLE_MIRRORS:
+        if not flat_dict.get(target) and flat_dict.get(source):
+            flat_dict[target] = flat_dict[source]
+
+    flat_dict["QualityScore"] = float(doc_item.get("quality_score_percent", 100.0))
+    flat_dict["ProcessedAt"] = str(doc_item.get("processed_at") or "")
+
+    # Раньше здесь подставлялись ZeroTrustStatus="unknown" и ZeroTrustValid=True
+    # для документа, который верификацию не проходил, то есть 1С получала
+    # ложное подтверждение. Теперь значения берутся из отчёта, а при его
+    # отсутствии остаются пустыми, а флаг ручной проверки становится истинным.
     from .verification_export import apply_verification_to_flat
 
-    return apply_verification_to_flat(target_dict, doc_or_wrapper)
+    return apply_verification_to_flat(flat_dict, doc_item)
 
 
 def normalize_doc_data(doc_item: Dict[str, Any]) -> Dict[str, Any]:
@@ -313,92 +320,6 @@ def normalize_doc_data(doc_item: Dict[str, Any]) -> Dict[str, Any]:
     from .verification_export import normalize_doc_data as _normalize
 
     return _normalize(doc_item)
-
-
-def convert_to_flat_1c(doc_item: Dict[str, Any], default_db_code: int = 10) -> Dict[str, Any]:
-    """
-    Универсальное преобразование документа любого типа в плоский (Flat) JSON для 1С и учетных систем.
-    Исключает вложенные словари. Все даты приводятся к ISO (YYYY-MM-DD), суммы — к числам.
-    """
-    doc_type = doc_item.get("doc_type", "unknown")
-    is_salary = doc_type in ("salary_deductions", "salary") or ("Bik" in doc_item and "DbCode" in doc_item)
-
-    if is_salary:
-        flat = convert_salary_to_target_1c(doc_item, default_db_code=default_db_code)
-        if "quality_score_percent" in doc_item:
-            flat["QualityScore"] = float(doc_item["quality_score_percent"])
-        return flat
-
-    data_val: Any = doc_item.get("data")
-    data: Dict[str, Any] = data_val if isinstance(data_val, dict) else doc_item
-    authority = _as_dict(data.get("court") or data.get("fssp") or data.get("authority"))
-
-    # Разрешение Стороны 1 (Взыскатель, Заказчик, Продавец, Доверитель, Заявитель, Работодатель)
-    party1 = _as_dict(
-        data.get("claimant")
-        or data.get("party_one")
-        or data.get("seller")
-        or data.get("customer")
-        or data.get("principal")
-        or data.get("sender")
-    )
-
-    # Разрешение Стороны 2 (Должник, Исполнитель, Покупатель, Поверенный, Адресат, Работник)
-    party2 = _as_dict(
-        data.get("debtor")
-        or data.get("party_two")
-        or data.get("buyer")
-        or data.get("contractor")
-        or data.get("agent")
-        or data.get("recipient")
-        or data.get("employee")
-    )
-
-    p1_name = str(party1.get("name") or data.get("organization_name") or data.get("claimant_name", ""))
-    p1_inn = str(party1.get("inn") or data.get("organization_inn", ""))
-    p2_name = str(party2.get("name") or party2.get("full_name") or data.get("debtor_name", ""))
-    p2_inn = str(party2.get("inn", ""))
-
-    finances = _as_dict(data.get("finances"))
-    total_rub = (
-        finances.get("total_rub")
-        or finances.get("total_deduction_rub")
-        or finances.get("total_claim_rub")
-        or finances.get("debt_amount_rub")
-        or party2.get("salary_rub")
-    )
-
-    flat_dict = {
-        "FileName": str(doc_item.get("file_name", "")),
-        "DocType": str(doc_type),
-        "DocTypeTitle": str(doc_item.get("doc_type_title", "")),
-        "DocDate": format_to_iso_date(data.get("doc_date") or data.get("issue_date") or data.get("act_date") or authority.get("act_date", "")),
-        "DocNumber": str(data.get("doc_number") or data.get("reg_number") or authority.get("case_number", "")),
-        "CourtOrAuthority": str(authority.get("name", "")),
-        "ClaimantName": p1_name,
-        "ClaimantInn": p1_inn,
-        "PartyOneName": p1_name,
-        "PartyOneInn": p1_inn,
-        "DebtorName": p2_name,
-        "DebtorInn": p2_inn,
-        "PartyTwoName": p2_name,
-        "PartyTwoInn": p2_inn,
-        "ClaimSubject": str(data.get("claim_subject") or data.get("powers_summary") or data.get("order_type", "")),
-        "DebtAmountRub": finances.get("debt_amount_rub") or finances.get("main_debt_rub") or finances.get("principal_debt_rub") or finances.get("total_rub_no_vat"),
-        "CourtFeeRub": finances.get("court_fee_rub") or finances.get("fee_penalty_rub") or finances.get("penalty_rub"),
-        "TotalAmountRub": total_rub,
-        "QualityScore": float(doc_item.get("quality_score_percent", 100.0)),
-        "ProcessedAt": str(doc_item.get("processed_at", "")),
-    }
-
-    # Раньше здесь подставлялись ZeroTrustStatus="unknown" и ZeroTrustValid=True
-    # для документа, который верификацию не проходил, то есть 1С получала
-    # ложное подтверждение. Теперь значения берутся из отчёта, а при его
-    # отсутствии остаются пустыми, а флаг ручной проверки становится истинным.
-    from .verification_export import apply_verification_to_flat
-
-    return apply_verification_to_flat(flat_dict, doc_item)
-
 
 
 def save_single_document_json(doc_result: Dict[str, Any], output_dir: str) -> str:
@@ -655,10 +576,10 @@ if __name__ == "__main__":
             with open(in_path, "r", encoding="utf-8") as f:
                 raw = json.load(f)
             if isinstance(raw, list):
-                converted_list: List[Any] = [convert_salary_to_target_1c(item) for item in raw]
+                converted_list: List[Any] = [convert_to_flat_1c(item) for item in raw]
                 res = converted_list
             else:
-                res = [convert_salary_to_target_1c(raw)]
+                res = [convert_to_flat_1c(raw)]
 
             if out_path:
                 os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)

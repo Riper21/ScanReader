@@ -26,10 +26,10 @@ import os
 import pytest
 
 from scan_reader.core.json_exporter import (
-    convert_salary_to_target_1c,
     convert_to_flat_1c,
     export_consolidated_registries,
 )
+from scan_reader.type_registry import get_plugin
 from scan_reader.core.verification_export import (
     REVIEW_REQUIRED_STATUSES,
     apply_verification_to_flat,
@@ -38,6 +38,10 @@ from scan_reader.core.verification_export import (
     verification_status_of,
 )
 from scan_reader.verifier import VerificationStatus
+
+# P2.1: кастомный сборщик плоской 1С-записи живёт в плагине salary_deductions
+# и подключён через manifest «flat_1c_builder».
+convert_salary_to_target_1c = get_plugin("salary_deductions").flat_1c_builder
 
 
 def _result(status, *, zt_is_valid=True, file_name="doc.pdf", **extra):

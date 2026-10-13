@@ -21,14 +21,12 @@ from typing import Dict, Any, List, Optional, Tuple, Union
 
 from . import config as _config
 
-from pydantic import BaseModel, Field, field_validator
-
-# H-16: единый набор относительных импортов без маскирующих ImportError-fallback
-from .core.utils import _safe_parse_json, get_logger, coerce_to_str
+from .core.utils import _safe_parse_json, env_float, get_logger
 from .core.token_tracker import TokenUsageTracker
 from .core.rate_limiter import RateLimiter
 from .core.cache import LLMResponseCache
-from .core.finance_parser import parse_russian_currency, extract_amounts_from_text
+from .core.finance_parser import extract_amounts_from_text
+from .doc_types.universal import UniversalDocumentDoc, UNIVERSAL_PROMPT_TEXT
 from .core.metrics_evaluator import (
     evaluate_dataset,
     generate_run_summary,
@@ -49,6 +47,7 @@ from .type_registry import get_registry, UNKNOWN_CATEGORY
 from .file_processor import FileProcessor, scan_directory_for_documents, SUPPORTED_IMAGE_EXTS
 from .core.document_loader import load_document, SUPPORTED_TEXT_EXTS, SUPPORTED_WORD_EXTS
 from .verifier.auditor import ZeroTrustAuditor
+from .verifier.spec import get_nested_value, path_is_declared, set_nested_value
 from .verifier.status import VerificationIssue, VerificationReport, VerificationStatus
 from .core.io_utils import mask_secret
 from .core.guardrails import run_guardrails
@@ -71,6 +70,29 @@ def _extraction_failed(base_name: str, reason: str) -> Dict[str, Any]:
         "status": "FAILED",
         "_extraction_failed": True,
     }
+
+
+def _vlm_http_timeout() -> float:
+    """
+    P2.4: таймаут HTTP-запроса к VLM (VLM_HTTP_TIMEOUT, по умолчанию 600 с).
+
+    Раньше одна переменная VLM_TIMEOUT управляла сразу двумя несвязанными
+    вещами с разными дефолтами: HTTP-таймаутом клиента (600) и временем
+    ожидания слота в RateLimiter (120). VLM_TIMEOUT сохранён как устаревший
+    алиас HTTP-таймаута и будет удалён; ожидание слота — VLM_SLOT_TIMEOUT.
+    """
+    legacy = os.getenv("VLM_TIMEOUT")
+    if legacy is not None and os.getenv("VLM_HTTP_TIMEOUT") is None:
+        logger.warning(
+            "VLM_TIMEOUT устарел (управлял и HTTP-таймаутом, и слотом лимитера с "
+            "разными дефолтами). Используйте VLM_HTTP_TIMEOUT / VLM_SLOT_TIMEOUT."
+        )
+        try:
+            return float(legacy)
+        except ValueError:
+            logger.warning(f"VLM_TIMEOUT='{legacy}' не число — используется 600.")
+    return env_float("VLM_HTTP_TIMEOUT", 600.0)
+
 
 logger = get_logger("facade")
 
@@ -105,35 +127,6 @@ def _get_version() -> str:
         return __version__
     except Exception:
         return "0.9.0"
-
-
-class UniversalDocumentDoc(BaseModel):
-    """Базовая универсальная Pydantic-схема для неопределенных или неподдерживаемых типов документов."""
-    file_name: str = Field(default="", description="Имя файла документа")
-    doc_type: str = Field(default="Неопределенный документ", description="Тип документа")
-    doc_date: str = Field(default="", description="Дата документа")
-    doc_number: str = Field(default="", description="Номер документа")
-    court_or_authority: str = Field(default="", description="Суд или орган")
-    claimant_name: str = Field(default="", description="Взыскатель/истец")
-    debtor_name: str = Field(default="", description="Должник/ответчик")
-    claim_subject: str = Field(default="", description="Предмет требования")
-    total_rub: Optional[float] = Field(default=None, description="Сумма в рублях")
-    notes: str = Field(default="Требуется ручная проверка типа документа", description="Примечания")
-
-    @field_validator('total_rub', mode='before')
-    @classmethod
-    def clean_amounts(cls, v: Any) -> Optional[float]:
-        return parse_russian_currency(v)
-
-    @field_validator(
-        'file_name', 'doc_type', 'doc_date', 'doc_number', 'court_or_authority',
-        'claimant_name', 'debtor_name', 'claim_subject', 'notes',
-        mode='before'
-    )
-    @classmethod
-    def clean_strings(cls, v: Any) -> str:
-        return coerce_to_str(v)
-
 
 
 def _glob_parts_match(pattern: str, text_lower: str) -> bool:
@@ -337,6 +330,7 @@ class LegalDocPlatformFacade:
                 is_cache_hit=False,
                 stage_name="ocr_transcribe",
                 doc_name=base_name,
+                modality="vision",
             )
             text = (resp.choices[0].message.content or "").strip()
             return text if len(text) >= 50 else None
@@ -355,7 +349,7 @@ class LegalDocPlatformFacade:
                 self._client = OpenAI(
                     base_url=self.base_url,
                     api_key=self.api_key or "dummy_local_key",
-                    timeout=float(os.getenv("VLM_TIMEOUT", "600"))
+                    timeout=_vlm_http_timeout(),
                 )
             except Exception as e:
                 logger.warning(f"Не удалось инициализировать OpenAI клиент: {e}")
@@ -445,7 +439,31 @@ class LegalDocPlatformFacade:
 
             logger.info(f"  [Router CoT {dur}s]: '{dt}' (conf: {conf}) -> {parsed.get('reason', '')}")
 
+            usage = resp.usage
+            self.tracker.record_call(
+                model=self.model_name,
+                prompt_tokens=usage.prompt_tokens if usage else 0,
+                completion_tokens=usage.completion_tokens if usage else 0,
+                total_tokens=usage.total_tokens if usage else 0,
+                latency_sec=dur,
+                is_cache_hit=False,
+                stage_name="classify_router",
+                doc_name=base_name,
+                modality="vision" if str(mode).startswith("vision") else "text",
+            )
+
             if dt in self.registry.ids():
+                # P2.4: заниженная уверенность роутера — это не результат, а
+                # гипотеза. Ниже порога тип отклоняется: документ уходит в
+                # unknown и помечается на ручную маршрутизацию, а не молча
+                # попадает в чужую ветку экстракции.
+                conf_min = env_float("VLM_ROUTER_CONFIDENCE_MIN", 0.5)
+                if conf < conf_min:
+                    logger.warning(
+                        f"Router: уверенность {conf} ниже порога {conf_min} — "
+                        f"тип '{dt}' отклонён для '{base_name}'."
+                    )
+                    return UNKNOWN_CATEGORY, conf, "vlm_low_confidence", parsed
                 return dt, conf, "vlm_dual_zone_router", parsed
 
         except Exception as e:
@@ -456,12 +474,15 @@ class LegalDocPlatformFacade:
     def classify_document(self, file_path: str, use_vlm_fallback: bool = True) -> Tuple[str, float, str]:
         """
         Комплексная классификация документа:
-        1. Быстрый эвристический анализ путей, имен и транслитерации.
-        2. Анализ текстовых маркеров (для текстовых/DOCX документов).
+        1. Быстрый эвристический анализ путей, имен и транслитерации (0.95 — финален).
+        2. Ключевые слова пути (0.90) и текстовые маркеры (0.92) — ГИПОТЕЗЫ:
+           P2.5 ниже 0.95 классификация не финальна и подтверждается VLM-роутером.
         3. Мультимодальный Fast-Path Router (Dual-Zone CoT) для сканов и изображений.
         """
         norm_path = file_path.replace("\\", "/").lower()
         file_name = os.path.basename(file_path).lower()
+
+        candidate: Optional[Tuple[str, float, str]] = None
 
         # 1. Эвристический проход по путям и именам файлов (glob-семантика, H-07)
         for plugin in self.registry.enabled_by_tie_priority():
@@ -470,32 +491,46 @@ class LegalDocPlatformFacade:
                 if not isinstance(pattern, str) or not pattern.strip():
                     continue
                 if _glob_parts_match(pattern, norm_path) or _glob_parts_match(pattern, file_name):
+                    # Совпадение с шаблоном пути заявляет тип однозначно — финально.
                     return plugin.id, 0.95, "heuristic_path"
 
+        # Ключевые слова пути — гипотеза (0.90), а не приговор.
+        for plugin in self.registry.enabled_by_tie_priority():
             for kw in plugin.manifest.get("classifier", {}).get("keywords", []):
                 kw_clean = kw.strip().lower()
                 if kw_clean:
                     pat = r'(?<![а-яёa-z0-9])' + re.escape(kw_clean) + r'(?![а-яёa-z0-9])'
                     if re.search(pat, norm_path) or re.search(pat, file_name):
-                        return plugin.id, 0.90, "heuristic_keyword"
+                        candidate = (plugin.id, 0.90, "heuristic_keyword")
+                        break
+            if candidate:
+                break
 
         # 2. Проверка текста для текстовых/DOCX файлов
-        try:
-            mode, content = self.processor.prepare_document_inputs(file_path, max_pages=1)
-            if mode == "text" and isinstance(content, str) and content.strip():
-                text_lower = content.lower()
-                for plugin in self.registry.enabled_by_tie_priority():
-                    for marker in plugin.classifier_rules.get("text_markers", []):
-                        if marker.lower() in text_lower:
-                            return plugin.id, 0.92, "text_content_marker"
-        except Exception as e:
-            logger.debug(f"Текстовые маркеры классификации не проверены для '{file_path}': {e}")
+        if candidate is None:
+            try:
+                mode, content = self.processor.prepare_document_inputs(file_path, max_pages=1)
+                if mode == "text" and isinstance(content, str) and content.strip():
+                    text_lower = content.lower()
+                    for plugin in self.registry.enabled_by_tie_priority():
+                        for marker in plugin.classifier_rules.get("text_markers", []):
+                            if marker.lower() in text_lower:
+                                candidate = (plugin.id, 0.92, "text_content_marker")
+                                break
+                        if candidate:
+                            break
+            except Exception as e:
+                logger.debug(f"Текстовые маркеры классификации не проверены для '{file_path}': {e}")
 
-        # 3. Мультимодальный Dual-Zone CoT Router
-        if use_vlm_fallback:
+        # 3. Мультимодальный Dual-Zone CoT Router: подтверждает или опровергает
+        # нефинальные гипотезы (P2.5), добирает тип для сканов без эвристик.
+        if use_vlm_fallback and (candidate is None or candidate[1] < 0.95):
             dt, conf, method, _ = self.classify_via_vlm(file_path)
             if dt != UNKNOWN_CATEGORY:
                 return dt, conf, method
+
+        if candidate is not None:
+            return candidate
 
         return UNKNOWN_CATEGORY, 0.0, "unknown"
 
@@ -527,20 +562,7 @@ class LegalDocPlatformFacade:
         # Fallback для неизвестных категорий (Zero Crashes)
         if plugin is None:
             logger.warning(f"⚠️ Тип документа '{doc_type}' не определен. Выполняется универсальная экстракция.")
-            system_prompt = (
-                "Ты — юридический аналитик. Проанализируй документ и извлеки базовые реквизиты строго в JSON:\n"
-                "{\n"
-                '  "doc_type": "Неопределенный документ",\n'
-                '  "doc_date": "дата",\n'
-                '  "doc_number": "номер",\n'
-                '  "court_or_authority": "суд или орган",\n'
-                '  "claimant_name": "взыскатель/истец",\n'
-                '  "debtor_name": "должник/ответчик",\n'
-                '  "claim_subject": "предмет требования",\n'
-                '  "total_rub": null,\n'
-                '  "notes": "Требуется ручная проверка типа документа"\n'
-                "}"
-            )
+            system_prompt = UNIVERSAL_PROMPT_TEXT
         else:
             system_prompt = plugin.prompt_text
 
@@ -633,7 +655,8 @@ class LegalDocPlatformFacade:
                         model=self.model_name,
                         is_cache_hit=True,
                         stage_name=f"extract_{doc_type}",
-                        doc_name=base_name
+                        doc_name=base_name,
+                        modality="vision" if mode == "vision" else "text",
                     )
                     cached_hit["file_name"] = base_name
                     return cached_hit
@@ -709,7 +732,8 @@ class LegalDocPlatformFacade:
                 latency_sec=latency_sec,
                 is_cache_hit=False,
                 stage_name=f"extract_{doc_type}",
-                doc_name=base_name
+                doc_name=base_name,
+                modality="vision" if mode == "vision" else "text",
             )
 
             parsed_data = _safe_parse_json(reply_text)
@@ -729,12 +753,13 @@ class LegalDocPlatformFacade:
         # ---------------------------------------------------------------------
         # 💰 ФИНАНСОВЫЙ ВОССТАНОВИТЕЛЬ (FINANCIAL RECOVERY FALLBACK)
         # ---------------------------------------------------------------------
-        # Если в извлеченных данных суммы не заполнены, сканируем текст ответа и текст документа
-        fin_obj = parsed_data.get("finances", {})
-        if not isinstance(fin_obj, dict):
-            fin_obj = {}
-            parsed_data["finances"] = fin_obj
-
+        # Если в извлеченных данных суммы не заполнены, сканируем текст ответа
+        # и текст документа. P2.1: какие поля и какими категориями сумм
+        # восстанавливать — ДЕКЛАРАЦИЯ плагина (verification.json, блок
+        # recovery). Ядро не знает ни имён полей, ни идентификаторов типов
+        # (Правило 3 AGENTS.md); плагин без декларации просто не запускает
+        # восстановитель.
+        #
         # Фаза 8.1: факт срабатывания восстановителя ПРОМЕЧАЕТСЯ в результате.
         # Раньше эвристика применялась молча, а статус heuristic_fallback был
         # недостижим: extraction_method вычислялся из результата классификации,
@@ -744,34 +769,42 @@ class LegalDocPlatformFacade:
         # видна оператору и не проходит как полноценная экстракция.
         recovered_by_regex: List[str] = []
 
-        # Проверка ключевых сумм
-        cur_total = fin_obj.get("total_rub") or fin_obj.get("total_deduction_rub") or fin_obj.get("debt_amount_rub")
-        if cur_total is None or cur_total == 0.0 or str(cur_total).strip() in ("", "None", "null"):
+        recovery_spec = plugin.verification_spec.recovery if plugin is not None else {}
+        recovery_totals = recovery_spec.get("total_fields", [])
+        recovery_rules = recovery_spec.get("fields", [])
+        totals_now = [get_nested_value(parsed_data, path) for path in recovery_totals]
+        need_scan = bool(recovery_rules) and all(
+            value is None or value == 0.0 or str(value).strip() in ("", "None", "null")
+            for value in totals_now
+        )
+
+        if need_scan:
             text_to_scan = reply_text
             if mode == "text" and isinstance(inputs, str):
                 text_to_scan += "\n" + inputs
 
             regex_amounts = extract_amounts_from_text(text_to_scan)
-            if regex_amounts.get("total_rub"):
-                logger.info(f"💰 Резервный Regex-сканер восстановил сумму для '{base_name}': {regex_amounts['total_rub']} руб.")
-                if "total_rub" in fin_obj or doc_type in ("executive_documents", "enforcement_orders"):
-                    fin_obj["total_rub"] = regex_amounts["total_rub"]
-                    recovered_by_regex.append("finances.total_rub")
-                if "total_deduction_rub" in fin_obj or doc_type == "salary_deductions":
-                    fin_obj["total_deduction_rub"] = regex_amounts["total_rub"]
-                    recovered_by_regex.append("finances.total_deduction_rub")
-                if "debt_amount_rub" in fin_obj and not fin_obj.get("debt_amount_rub"):
-                    fin_obj["debt_amount_rub"] = regex_amounts.get("main_debt_rub") or regex_amounts["total_rub"]
-                    recovered_by_regex.append("finances.debt_amount_rub")
-                if "main_debt_rub" in fin_obj and not fin_obj.get("main_debt_rub"):
-                    fin_obj["main_debt_rub"] = regex_amounts.get("main_debt_rub") or regex_amounts["total_rub"]
-                    recovered_by_regex.append("finances.main_debt_rub")
-                if "court_fee_rub" in fin_obj and not fin_obj.get("court_fee_rub"):
-                    fin_obj["court_fee_rub"] = regex_amounts.get("court_fee_rub")
-                    recovered_by_regex.append("finances.court_fee_rub")
-                if "court_costs_rub" in fin_obj and not fin_obj.get("court_costs_rub"):
-                    fin_obj["court_costs_rub"] = regex_amounts.get("court_fee_rub")
-                    recovered_by_regex.append("finances.court_costs_rub")
+            for rule in recovery_rules:
+                source_value = regex_amounts.get(rule["source"])
+                if source_value is None and rule.get("fallback_source"):
+                    source_value = regex_amounts.get(rule["fallback_source"])
+                if source_value is None:
+                    continue
+                path = rule["path"]
+                current = get_nested_value(parsed_data, path)
+                already_filled = (
+                    current is not None and current != 0.0
+                    and str(current).strip() not in ("", "None", "null")
+                )
+                # «always» — заполнять и когда поле вообще отсутствовало в
+                # ответе модели; без флага — только уже объявленное, но пустое.
+                if already_filled or (not rule.get("always") and not path_is_declared(parsed_data, path)):
+                    continue
+                set_nested_value(parsed_data, path, source_value)
+                recovered_by_regex.append(path)
+                logger.info(
+                    f"💰 Резервный Regex-сканер восстановил сумму для '{base_name}': {source_value} руб."
+                )
 
         # Фаза 8.1: нераспарсенный ответ модели — тоже эвристический случай
         # (P0.6: без повторного парсинга — флаг известен из цикла попыток).

@@ -46,5 +46,14 @@
     {"path": "blank_number", "min_length": 5}
   ],
   "gate_names": ["claimant.name", "debtor.name"],
-  "gate_authorities": ["court.name"]
+  "gate_authorities": ["court.name"],
+  "recovery": {
+    "_comment": "P2.1: резервное восстановление сумм регулярным сканером. Итоговую сумму восстанавливаем всегда (даже если модель её не объявила) — без неё исполнительный лист теряет смысл; слагаемые — только когда модель объявила поле, но оставила его пустым.",
+    "total_fields": ["finances.total_rub"],
+    "fields": [
+      {"path": "finances.total_rub", "source": "total_rub", "always": true},
+      {"path": "finances.main_debt_rub", "source": "main_debt_rub", "fallback_source": "total_rub"},
+      {"path": "finances.court_fee_rub", "source": "court_fee_rub"}
+    ]
+  }
 }

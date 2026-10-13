@@ -12,6 +12,7 @@
   "js_var": "SALARY_DEDUCTIONS_DATA",
   "gt_file": "salary_deductions.json",
   "schema_class": "SalaryDeductionDoc",
+  "flat_1c_builder": "flat_1c.convert",
   "classifier": {
     "keywords": ["взыскании на заработную плату", "доходы должника", "работодатель", "удержание из заработной платы", "бухгалтерия", "судебный пристав-исполнитель"]
   },

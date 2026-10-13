@@ -229,6 +229,29 @@ def test_c06_deduction_limit_rule_uses_legal_checker():
     assert ok is True
 
 
+def test_c06_deduction_limit_basis_comes_from_plugin_spec():
+    """
+    P2.1: поле-основание лимита объявляет плагин (basis_fields в
+    verification.json), а не ядро. У salary_deductions предмет требования
+    с алиментами поднимает потолок до 70% по ст. 99 229-ФЗ.
+    """
+    ok, _note = evaluate_rule(
+        "deduction_limit", "70%",
+        {"claim_subject": "алименты на содержание детей"},
+        plugin_id="salary_deductions",
+    )
+    assert ok is True
+    ok, _note = evaluate_rule(
+        "deduction_limit", "80%",
+        {"claim_subject": "алименты на содержание детей"},
+        plugin_id="salary_deductions",
+    )
+    assert ok is False
+    # Без объявления типа — общий потолок 50%, предмет требования не читается
+    ok, _note = evaluate_rule("deduction_limit", "70%", {"claim_subject": "алименты"})
+    assert ok is False
+
+
 # =========================================================================
 # 5.6: все 9 типов оцениваются по данным плагина
 # =========================================================================

@@ -40,6 +40,39 @@ def test_safe_parse_json_invalid_input():
     assert _safe_parse_json("Невалидный текст без json") == {}
 
 
+def test_safe_parse_json_multiple_markdown_blocks():
+    """P2.6: первый ```-блок может быть пояснением, JSON — во втором."""
+    raw = (
+        "Пояснение:\n```\nздесь модель размышляет текстом\n```\n"
+        "Ответ:\n```json\n{\"doc_type\": \"Приказ\"}\n```"
+    )
+    parsed = _safe_parse_json(raw)
+    assert parsed == {"doc_type": "Приказ"}
+
+
+def test_safe_parse_json_array_of_objects_first_wins():
+    """P2.6: массив объектов -> первый словарь."""
+    raw = '[{"item": 1}, {"item": 2}]'
+    parsed = _safe_parse_json(raw)
+    assert parsed == {"item": 1}
+
+
+def test_safe_parse_json_nan_and_infinity_become_none():
+    """P2.6: NaN/Infinity не проходят в пайплайн как числа."""
+    raw = '{"total_rub": NaN, "amount": Infinity, "valid": true}'
+    parsed = _safe_parse_json(raw)
+    assert parsed["total_rub"] is None
+    assert parsed["amount"] is None
+    assert parsed["valid"] is True
+
+
+def test_safe_parse_json_multiple_bare_objects_first_wins():
+    """P2.6: несколько объектов в тексте -> первый валидный (раньше {})."""
+    raw = 'Заметка {"ref": 1}. Ответ: {"doc_type": "УПД"}'
+    parsed = _safe_parse_json(raw)
+    assert parsed == {"ref": 1}
+
+
 def test_sanitize_filename():
     assert sanitize_filename("Приказ / О возбуждении: ИП <123>?*") == "Приказ _ О возбуждении_ ИП _123___"
     assert sanitize_filename("") == "document"

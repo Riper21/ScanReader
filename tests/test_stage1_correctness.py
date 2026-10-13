@@ -212,8 +212,9 @@ def test_p07_evaluate_dataset_dir_mode_counts_once(tmp_path):
     assert cat.get("total_documents") == 1, "документ задвоен через Registry_Full.json"
 
 
-def test_c09_mcp_scan_document_audits_extracted_data(monkeypatch, tmp_path):
-    """C-09: MCP scan_document passes result['data'] and raw_text to ZeroTrustAuditor."""
+def test_c09_mcp_scan_document_returns_single_audit(monkeypatch, tmp_path):
+    """C-09/P2.3: MCP scan_document не запускает повторный аудит — единственный
+    Zero-Trust-отчёт формирует фасад и приходит в результате как есть."""
     # H-20: временный каталог должен быть в whitelist разрешенных корней
     monkeypatch.setenv("SCANREADER_ALLOWED_DIRS", str(tmp_path))
     facade_mock = MagicMock()
@@ -223,10 +224,11 @@ def test_c09_mcp_scan_document_audits_extracted_data(monkeypatch, tmp_path):
         "data": {
             "seller": {"name": "ООО Продавец", "inn": "7707083893"},
             "total_amount_rub": 1000.0
-        }
+        },
+        "zero_trust": {"status": "zero_trust_verified", "is_valid": True,
+                       "issues": [], "details": {}},
     }
     facade_mock.process_single_document.return_value = fake_result
-    facade_mock._extract_raw_text_for_audit.return_value = "Текст документа"
 
     server = ScanReaderMCPServer(facade=facade_mock)
 
@@ -235,16 +237,11 @@ def test_c09_mcp_scan_document_audits_extracted_data(monkeypatch, tmp_path):
 
     try:
         with patch("scan_reader.verifier.auditor.ZeroTrustAuditor.audit_document") as mock_audit:
-            mock_report = MagicMock()
-            mock_report.to_dict.return_value = {"status": "verified"}
-            mock_audit.return_value = mock_report
+            result = server.call_tool("scan_document", {"file_path": str(dummy_pdf)})
 
-            server.call_tool("scan_document", {"file_path": str(dummy_pdf), "verify_zero_trust": True})
-
-            mock_audit.assert_called_once()
-            call_kwargs = mock_audit.call_args[1]
-            assert call_kwargs["data"] == fake_result["data"]
-            assert call_kwargs["raw_ocr_text"] == "Текст документа"
+            mock_audit.assert_not_called()
+            assert result["zero_trust"] == fake_result["zero_trust"]
+            assert "zero_trust_report" not in result
     finally:
         if dummy_pdf.exists():
             dummy_pdf.unlink()

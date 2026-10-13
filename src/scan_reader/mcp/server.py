@@ -8,88 +8,112 @@
 
 Безопасность (H-20): доступ к файлам ограничен whitelist корней —
 переменная окружения SCANREADER_ALLOWED_DIRS (разделитель os.pathsep),
-по умолчанию cwd и каталог результатов.
+по умолчанию cwd и каталог результатов. Проверке подлежат пути ВСЕХ
+инструментов: scan_document, classify_document, run_benchmark и
+export_results.
 """
 
 from __future__ import annotations
 
 import json
-import logging
 import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..core.io_utils import MAX_INPUT_BYTES
+from ..core.utils import get_logger
 from ..facade import LegalDocPlatformFacade
 from ..verifier.auditor import ZeroTrustAuditor
 
-_srv_logger = logging.getLogger("mcp.server")
+_srv_logger = get_logger("mcp.server")
 
-TOOL_DEFINITIONS = [
-    {
-        "name": "scan_document",
-        "description": "Распознать юридический/исполнительный документ (PDF, скан, DOCX), выполнить VLM-экстракцию и Zero-Trust аудит.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "file_path": {"type": "string", "description": "Абсолютный путь к файлу скана"},
-                "doc_type": {
-                    "type": "string",
-                    "enum": ["auto", "salary_deductions", "executive_documents", "enforcement_orders"],
-                    "default": "auto",
+
+def _doc_type_enum() -> List[str]:
+    """
+    P2.3: перечень типов документов строится из реестра плагинов, а не
+    зашит в MCP-слое. Реестр ленив, поэтому импорт отложен до вызова.
+    """
+    from ..type_registry import get_registry
+
+    try:
+        return ["auto"] + sorted(get_registry().ids())
+    except Exception as exc:
+        _srv_logger.warning(f"Не удалось получить перечень плагинов для tools/list: {exc}")
+        return ["auto"]
+
+
+def _tool_definitions() -> List[Dict[str, Any]]:
+    return [
+        {
+            "name": "scan_document",
+            "description": "Распознать юридический/исполнительный документ (PDF, скан, DOCX), выполнить VLM-экстракцию и Zero-Trust аудит.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string", "description": "Абсолютный путь к файлу скана"},
+                    "doc_type": {
+                        "type": "string",
+                        "enum": _doc_type_enum(),
+                        "default": "auto",
+                    },
                 },
-                "verify_zero_trust": {"type": "boolean", "default": True},
-            },
-            "required": ["file_path"],
-        },
-    },
-    {
-        "name": "classify_document",
-        "description": "Выполнить быстрый Fast-Path роутинг документа по его шапке и визуальным маркерам.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "file_path": {"type": "string", "description": "Путь к файлу"},
-            },
-            "required": ["file_path"],
-        },
-    },
-    {
-        "name": "verify_legal_data",
-        "description": "Проверить готовые реквизиты (ИНН, СНИЛС, суммы, даты) через детерминированный Zero-Trust аудитор.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "data": {"type": "object", "description": "Словарь с реквизитами документа"},
-                "doc_type": {"type": "string", "description": "Тип документа", "default": "salary_deductions"},
-                "raw_ocr_text": {"type": "string", "description": "Сырой текст документа для антигаллюцинационного контроля"},
-            },
-            "required": ["data"],
-        },
-    },
-    {
-        "name": "run_benchmark",
-        "description": "Запустить бенчмарк точности экстракции против эталонной разметки Ground Truth.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "ground_truth_path": {"type": "string", "description": "Каталог эталонов (по умолчанию data/ground_truth)"},
+                "required": ["file_path"],
             },
         },
-    },
-    {
-        "name": "export_results",
-        "description": "Собрать консолидированный Excel-реестр и 1С-выгрузку из обработанных документов.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "results_dir": {"type": "string", "description": "Каталог с результатами"},
-                "target_format": {"type": "string", "enum": ["excel", "1c", "both"], "default": "both"},
+        {
+            "name": "classify_document",
+            "description": "Выполнить быстрый Fast-Path роутинг документа по его шапке и визуальным маркерам.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string", "description": "Путь к файлу"},
+                },
+                "required": ["file_path"],
             },
         },
-    },
-]
+        {
+            "name": "verify_legal_data",
+            "description": "Проверить готовые реквизиты (ИНН, СНИЛС, суммы, даты) через детерминированный Zero-Trust аудитор.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "data": {"type": "object", "description": "Словарь с реквизитами документа"},
+                    "doc_type": {"type": "string", "description": "Тип документа (идентификатор плагина)"},
+                    "raw_ocr_text": {"type": "string", "description": "Сырой текст документа для антигаллюцинационного контроля"},
+                },
+                "required": ["data", "doc_type"],
+            },
+        },
+        {
+            "name": "run_benchmark",
+            "description": "Запустить бенчмарк точности экстракции против эталонной разметки Ground Truth.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "ground_truth_path": {"type": "string", "description": "Каталог эталонов (по умолчанию data/ground_truth)"},
+                },
+            },
+        },
+        {
+            "name": "export_results",
+            "description": "Собрать консолидированный Excel-реестр и 1С-выгрузку из обработанных документов.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "results_dir": {"type": "string", "description": "Каталог с результатами"},
+                    "target_format": {"type": "string", "enum": ["excel", "1c", "both"], "default": "both"},
+                },
+            },
+        },
+    ]
+
+
+def __getattr__(name: str):
+    """PEP 562: TOOL_DEFINITIONS собирается лениво из реестра плагинов."""
+    if name == "TOOL_DEFINITIONS":
+        return _tool_definitions()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class ScanReaderMCPServer:
@@ -136,7 +160,7 @@ class ScanReaderMCPServer:
         return False
 
     def list_tools(self) -> List[Dict[str, Any]]:
-        return list(TOOL_DEFINITIONS)
+        return _tool_definitions()
 
     def call_tool(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(arguments, dict):
@@ -161,23 +185,13 @@ class ScanReaderMCPServer:
                 doc_type_arg = arguments.get("doc_type", "auto")
                 doc_type = None if doc_type_arg == "auto" else doc_type_arg
 
-                result = self.facade.process_single_document(
+                # P2.3: единственный Zero-Trust-отчёт формирует фасад внутри
+                # process_single_document. Повторный аудит в MCP-слое создавал
+                # второй расходящийся отчёт под другим ключом.
+                return self.facade.process_single_document(
                     file_path=file_path,
                     doc_type=doc_type,
                 )
-
-                if arguments.get("verify_zero_trust", True):
-                    det_type = result.get("doc_type", "unknown")
-                    raw_text = self.facade._extract_raw_text_for_audit(file_path)
-                    extracted_data = result.get("data", {}) if isinstance(result, dict) else {}
-                    report = ZeroTrustAuditor.audit_document(
-                        data=extracted_data,
-                        doc_type=det_type,
-                        raw_ocr_text=raw_text,
-                    )
-                    result["zero_trust_report"] = report.to_dict()
-
-                return result
 
             elif name == "classify_document":
                 file_path = arguments.get("file_path", "")
@@ -199,7 +213,9 @@ class ScanReaderMCPServer:
 
             elif name == "verify_legal_data":
                 data = arguments.get("data", {})
-                doc_type = arguments.get("doc_type", "salary_deductions")
+                doc_type = str(arguments.get("doc_type") or "")
+                if not doc_type:
+                    return {"error": "doc_type is required: specify a plugin id from tools/list", "isError": True}
                 raw_ocr_text = arguments.get("raw_ocr_text")
                 report = ZeroTrustAuditor.audit_document(
                     data=data,
@@ -217,12 +233,21 @@ class ScanReaderMCPServer:
                         os.path.join(os.getcwd(), "data", "ground_truth"),
                         os.path.join(self.facade.results_dir, "..", "data", "ground_truth"),
                     ]
+                    # P2.3/H-20: каталон эталонов по умолчанию берётся только из
+                    # разрешенных корней, как и явный путь.
                     for c in candidates:
-                        if os.path.isdir(c):
+                        if os.path.isdir(c) and self._is_path_allowed(c):
                             gt_path = c
                             break
                     if not gt_path:
                         gt_path = candidates[0]
+
+                if not self._is_path_allowed(gt_path):
+                    return {
+                        "error": f"Access denied: path '{gt_path}' is outside allowed roots. "
+                                 f"Configure SCANREADER_ALLOWED_DIRS if needed.",
+                        "isError": True,
+                    }
 
                 gt_dir = Path(gt_path).resolve()
                 if not gt_dir.is_dir():
@@ -240,6 +265,13 @@ class ScanReaderMCPServer:
 
                 results_dir = str(arguments.get("results_dir") or self.facade.results_dir)
                 target_format = arguments.get("target_format", "both")
+
+                if not self._is_path_allowed(results_dir):
+                    return {
+                        "error": f"Access denied: path '{results_dir}' is outside allowed roots. "
+                                 f"Configure SCANREADER_ALLOWED_DIRS if needed.",
+                        "isError": True,
+                    }
 
                 # P0.7: единая каноническая выборка (один документ — одна запись):
                 # Registry_Full/raw/Flat и легаси-карточки не задваивают экспорт.

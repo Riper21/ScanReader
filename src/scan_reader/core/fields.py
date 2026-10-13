@@ -24,9 +24,12 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 
+from .utils import get_logger
 from ..verifier.checksums import validate_inn
+
+_logger = get_logger("core.fields")
 
 #: ИНН: 10 цифр (юридическое лицо / ИП) или 12 (физическое лицо).
 INN_PATTERN = r"^\d{10}(\d{2})?$"
@@ -41,8 +44,8 @@ OGRNIP_PATTERN = r"^\d{15}$"
 BIK_PATTERN = r"^0[14]\d{7}$"
 #: Банковский счёт: 20 цифр, возможны пробелы и дефисы.
 ACCOUNT_PATTERN = r"^[\d\- ]{17,26}$"
-#: Процент удержания: число с необязательным знаком %.
-PERCENT_PATTERN = r"^\d{1,3}(?:[.,]\d{1,2})?\s*%?$"
+#: Процент удержания: число 0..100 с необязательным знаком %.
+PERCENT_PATTERN = r"^(?:\d{1,2}|100)(?:[.,]\d{1,2})?\s*%?$"
 #: Номер исполнительного производства: NNNNN/ГГ/ДД/РЕГИОН-ИП (регион опционален).
 IP_NUMBER_PATTERN = r"^\d{5}/\d{2}/\d{2}(?:\d{5})?[-–]?ИП?\.?$"
 #: Дата в форматах, встречающихся в российских документах.
@@ -121,6 +124,10 @@ class ValidatedBankMixin(BaseModel):
 
     bik: Optional[str] = Field(default=None, description="БИК банка (9 цифр)")
     payment_account: Optional[str] = Field(default=None, description="Расчётный счёт (20 цифр)")
+    #: P2.7: небезопасный ключ счёта — приватный атрибут модели, а не
+    #: ручная запись в __dict__ (последняя обходила Pydantic и могла
+    #: протекать в сериализацию extras).
+    _account_key_unverified: Optional[str] = PrivateAttr(default=None)
 
     @field_validator("bik", "payment_account", mode="before")
     @classmethod
@@ -159,7 +166,15 @@ class ValidatedBankMixin(BaseModel):
             if not ok:
                 # Не ошибка схемы: счета Банка России ключуются иначе, и решение
                 # об исключении принимает аудитор, у которого есть имя получателя.
-                self.__dict__["_account_key_unverified"] = msg
+                # P2.7: маркер сохраняется в PrivateAttr и дублируется
+                # предупреждением в лог — раньше несходимость ключа была
+                # полностью тихой (Правило 1).
+                self._account_key_unverified = msg
+                _logger.warning(
+                    "Ключ расчётного счёта не сходится с БИК: %s. "
+                    "Реквизиты переданы аудитору, решение об исключении — за ним.",
+                    msg,
+                )
         return self
 
 
@@ -169,5 +184,11 @@ def money_field(description: str) -> Any:
 
 
 def percent_field(description: str) -> Any:
-    """Процент: 0..100 с необязательным знаком %."""
-    return Field(default=None, description=description)
+    """
+    Процент: 0..100 с необязательным знаком %.
+
+    P2.7: раньше docstring обещал диапазон 0..100, но Field не задавал
+    границ вовсе, и «999%» проходило схему. Форма значения — на схеме
+    (Правило 6), аудитор проверяет лишь статутные лимиты.
+    """
+    return Field(default=None, ge=0, le=100, description=description)

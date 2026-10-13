@@ -54,12 +54,40 @@ def setup_console_utf8() -> None:
 setup_console_utf8()
 
 
+def _nan_to_none(_constant: str) -> None:
+    """
+    P2.6: константы NaN/Infinity не входят в стандарт JSON — на входе
+    парсера они превращаются в None, а не расползаются по пайплайну
+    в виде чисел с неопределённым значением.
+    """
+    return None
+
+
+def _as_result(data: Any) -> Dict[str, Any]:
+    """
+    P2.6: нормализация результата парсинга ответа модели.
+    - dict -> возвращается как есть;
+    - массив объектов -> первый словарь (модель обернула ответ в список);
+    - прочее (число, строка, null, пустой dict) -> {} как «не распознано».
+    """
+    if isinstance(data, dict):
+        return data
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        _module_logger.debug("Парсер: ответ — массив объектов, взят первый элемент.")
+        return data[0]
+    return {}
+
+
 def _safe_parse_json(text: Any) -> Dict[str, Any]:
     """
     Вспомогательная функция безопасного парсинга JSON из вывода VLM/LLM.
     1. Очищает блоки рассуждений моделей Qwen / DeepSeek (<think>...</think>).
-    2. Извлекает JSON из markdown code blocks (```json ... ``` или ``` ... ```).
-    3. При необходимости ищет внешние фигурные скобки { ... }.
+    2. Пробует прямой json.loads (NaN/Infinity -> None, массив объектов -> первый).
+    3. Извлекает JSON из markdown code blocks (```json ... ``` или ``` ... ```),
+       перебирая ВСЕ блоки по порядку (P2.6: раньше проверялся только первый).
+    4. Сканирует сбалансированные объекты { ... } по одному слева направо
+       (P2.6: раньше внешние скобки охватывали сразу несколько объектов
+       и парсинг срывался).
     """
     if not text:
         return {}
@@ -75,33 +103,36 @@ def _safe_parse_json(text: Any) -> Dict[str, Any]:
 
     # 2. Прямая попытка стандартного json.loads
     try:
-        data = json.loads(clean_text)
-        if isinstance(data, dict):
-            return data
+        result = _as_result(json.loads(clean_text, parse_constant=_nan_to_none))
+        if result:
+            return result
     except Exception as e:
         _module_logger.debug(f"Прямой json.loads не удался: {e}")
 
-    # 3. Попытка извлечь JSON из markdown-блока ```json ... ```
-    match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", clean_text, flags=re.IGNORECASE)
-    if match:
+    # 3. Перебор ВСЕХ markdown-блоков по порядку (P2.6: первый блок может
+    # содержать пояснение модели, а сам JSON — во втором и последующих).
+    for match in re.finditer(r"```(?:json)?\s*([\s\S]*?)\s*```", clean_text, flags=re.IGNORECASE):
         try:
-            data = json.loads(match.group(1).strip())
-            if isinstance(data, dict):
-                return data
+            result = _as_result(json.loads(match.group(1).strip(), parse_constant=_nan_to_none))
+            if result:
+                return result
         except Exception as e:
             _module_logger.debug(f"JSON из markdown-блока не распознан: {e}")
 
-    # 4. Попытка извлечь JSON по крайним фигурным скобкам { ... }
-    first_brace = clean_text.find("{")
-    last_brace = clean_text.rfind("}")
-    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
-        json_candidate = clean_text[first_brace:last_brace + 1].strip()
+    # 4. Сбалансированные объекты { ... } по одному, слева направо (P2.6:
+    # раньше скобки брались от первого '{' до последнего '}' и при
+    # нескольких объектах в ответе получалась невалидная склейка).
+    decoder = json.JSONDecoder(parse_constant=_nan_to_none)
+    idx = clean_text.find("{")
+    while idx != -1:
         try:
-            data = json.loads(json_candidate)
-            if isinstance(data, dict):
-                return data
-        except Exception as e:
-            _module_logger.debug(f"JSON по внешним скобкам не распознан: {e}")
+            data, _end = decoder.raw_decode(clean_text, idx)
+            result = _as_result(data)
+            if result:
+                return result
+        except json.JSONDecodeError:
+            _module_logger.debug("Сбалансированный объект не распознан, поиск продолжен.")
+        idx = clean_text.find("{", idx + 1)
 
     return {}
 
@@ -195,6 +226,24 @@ def get_logger(name: str) -> logging.Logger:
         log_level = os.getenv("LOG_LEVEL", "INFO").upper()
         logger.setLevel(getattr(logging, log_level, logging.INFO))
     return logger
+
+
+def env_float(name: str, default: float) -> float:
+    """
+    P2.4: читает float из окружения. Пустое или битое значение возвращает
+    дефолт с предупреждением в лог, а не роняет конвейер на старте
+    (конфигурация оператора не должна валить пакетную обработку).
+    """
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        get_logger("core.utils").warning(
+            f"Переменная {name}='{raw}' не число — используется {default}."
+        )
+        return default
 
 
 def normalize_ip_number(val: Any) -> str:

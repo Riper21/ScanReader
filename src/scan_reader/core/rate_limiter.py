@@ -8,7 +8,7 @@ import os
 import time
 import threading
 from typing import Optional
-from .utils import get_logger
+from .utils import env_float, get_logger
 
 logger = get_logger("core.rate_limiter")
 
@@ -35,9 +35,12 @@ class RateLimiter:
         enabled: Optional[bool] = None,
         timeout: Optional[float] = None
     ):
-        self.rpm_limit = rpm_limit if rpm_limit is not None else int(os.getenv("VLM_RPM_LIMIT", "60"))
-        self.max_concurrency = max_concurrency if max_concurrency is not None else int(os.getenv("VLM_MAX_CONCURRENCY", "2"))
-        self.timeout = timeout if timeout is not None else float(os.getenv("VLM_TIMEOUT", "120.0"))
+        self.rpm_limit = rpm_limit if rpm_limit is not None else int(env_float("VLM_RPM_LIMIT", 60.0))
+        self.max_concurrency = max_concurrency if max_concurrency is not None else int(env_float("VLM_MAX_CONCURRENCY", 2.0))
+        # P2.4: ожидание слота/токена отделено от HTTP-таймаута VLM
+        # (VLM_HTTP_TIMEOUT). Раньше обе настройки читали одну переменную
+        # VLM_TIMEOUT с разными дефолтами (120 против 600).
+        self.timeout = timeout if timeout is not None else env_float("VLM_SLOT_TIMEOUT", 120.0)
         if enabled is not None:
             self.enabled = enabled
         else:
@@ -109,12 +112,20 @@ class RateLimiter:
         """
         Вход в контекстный менеджер (C-11).
         Если захват не удался, выбрасывает RateLimitTimeoutError, предотвращая неконтролируемый запрос.
+
+        P2.7: вложенный захват в том же потоке запрещён — раньше он молча
+        съедал второй слот параллелизма, а при max_concurrency=1 гарантированно
+        истекал по таймауту, выдавая ложную «перегрузку VLM» вместо ошибки
+        конфигурации кода.
         """
+        if getattr(self._local, "acquired_depth", 0) > 0:
+            raise RuntimeError(
+                "RateLimiter уже захвачен этим потоком: вложенный 'with' запрещён — "
+                "он занимает второй слот параллелизма и ломает семантику лимита"
+            )
         acquired = self.acquire(timeout=self.timeout)
-        if not hasattr(self._local, "acquired_depth"):
-            self._local.acquired_depth = 0
         if acquired:
-            self._local.acquired_depth += 1
+            self._local.acquired_depth = 1
             return self
         else:
             raise RateLimitTimeoutError("Превышен таймаут ожидания слота/токена RateLimiter")
@@ -125,5 +136,5 @@ class RateLimiter:
         Освобождает слот только если он был действительно захвачен.
         """
         if getattr(self._local, "acquired_depth", 0) > 0:
-            self._local.acquired_depth -= 1
+            self._local.acquired_depth = 0
             self.release()

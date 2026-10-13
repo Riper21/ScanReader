@@ -14,6 +14,11 @@
     autonomous.json        — DSL автономных Guardrails-проверок
     verification.json      — декларация верификации: реквизиты, сверка денег,
                               хронология, поля кросс-модального гейта
+    flat_1c.json           — (P2.1, опционально) маппинг «колонка плоской записи
+                              1С ← путь в модели» для универсального экспортёра
+    flat_1c.py             — (только salary_deductions) кастомный сборщик
+                              плоской 1С-записи; подключается ключом manifest
+                              «flat_1c_builder»: «flat_1c.convert»
 
 Ядро системы (конвейер, классификатор, верификатор, экспорт, метрики) НЕ
 содержит жестко зашитых категорий: оно читает реестр через функции этого модуля.
@@ -52,8 +57,9 @@ REQUIRED_PLUGIN_FILES = (
 
 # Фаза 6: verification.json — восьмой файл контракта. Необязателен: плагин без
 # него проходит только общие проверки, и это позволяет добавлять новый тип
-# документа простым созданием папки.
-OPTIONAL_PLUGIN_FILES = ("verification.json",)
+# документа простым созданием папки. P2.1: flat_1c.json — девятый, маппинг
+# колонок универсальной плоской записи 1С.
+OPTIONAL_PLUGIN_FILES = ("verification.json", "flat_1c.json")
 
 
 class PluginSpec:
@@ -133,6 +139,52 @@ class PluginSpec:
         )
         for warning in self.verification_path_warnings:
             logger.warning(warning)
+
+        # --- P2.1: плоская запись 1С ---
+        # Ядро-экспортёр знает только ФОРМАТ обмена 1С (PascalCase-колонки).
+        # Какие пути документа какие колонки заполняют — решает плагин.
+        flat_1c_config = self._load_json("flat_1c.json", default={})
+        raw_columns = flat_1c_config.get("columns", []) if isinstance(flat_1c_config, dict) else []
+        self.flat_1c_columns: List[Dict[str, str]] = []
+        for idx, col in enumerate(raw_columns if isinstance(raw_columns, list) else []):
+            if not isinstance(col, dict):
+                raise ValueError(
+                    f"Колонка #{idx} в flat_1c.json плагина '{self.folder_name}' должна быть dict, "
+                    f"получено: {type(col).__name__}"
+                )
+            name = str(col.get("column", "")).strip()
+            path = str(col.get("path", "")).strip()
+            kind = str(col.get("kind", "text")).strip().lower()
+            if not name or not path:
+                raise ValueError(
+                    f"Колонка #{idx} в flat_1c.json плагина '{self.folder_name}' должна содержать column и path"
+                )
+            if kind not in ("text", "number", "date", "boolean"):
+                raise ValueError(
+                    f"Колонка '{name}' в flat_1c.json плагина '{self.folder_name}': неизвестный kind '{kind}'. "
+                    f"Допустимо: text, number, date, boolean"
+                )
+            self.flat_1c_columns.append({"column": name, "path": path, "kind": kind})
+
+        self.flat_1c_path_warnings: List[str] = []
+        if self.flat_1c_columns:
+            from .verifier.spec import path_exists_in_schema
+
+            for col in self.flat_1c_columns:
+                if not path_exists_in_schema(self.schema_cls, col["path"]):
+                    warning = (
+                        f"flat_1c.json плагина '{self.folder_name}': путь '{col['path']}' "
+                        f"не найден в схеме — колонка '{col['column']}' всегда будет пустой"
+                    )
+                    self.flat_1c_path_warnings.append(warning)
+                    logger.warning(warning)
+
+        # Кастомный сборщик плоской записи (только salary_deductions): ключ
+        # manifest «flat_1c_builder» вида «модуль.функция».
+        self.flat_1c_builder = None
+        builder_ref = str(self.manifest.get("flat_1c_builder", "") or "").strip()
+        if builder_ref:
+            self.flat_1c_builder = self._load_flat_1c_builder(builder_ref)
 
         # Нормализация и валидация benchmark.json (C-03)
         # C-06: тип поля обязан быть из известного словаряря. Раньше проверялся
@@ -239,6 +291,36 @@ class PluginSpec:
         if cls is None:
             raise ValueError(f"В {schema_path} нет класса '{self.schema_class_name}'")
         return cls
+
+    def _load_flat_1c_builder(self, ref: str):
+        """
+        P2.1: загружает функцию-сборщик плоской 1С-записи из модуля плагина.
+
+        Ссылка в manifest.json имеет вид «flat_1c.convert». Как и schema.py
+        (Фаза 7.9), модуль не регистрируется в sys.modules: реестр
+        перезагружается, а утечка ссылок на модули росла бы с каждой
+        перезагрузкой.
+        """
+        module_name, _, attr = ref.partition(".")
+        if not module_name or not attr:
+            raise ValueError(
+                f"manifest.flat_1c_builder плагина '{self.folder_name}' должен иметь вид 'модуль.функция', "
+                f"получено: '{ref}'"
+            )
+        module_path = os.path.join(self.folder_path, f"{module_name}.py")
+        if not os.path.exists(module_path):
+            raise ValueError(
+                f"manifest.flat_1c_builder плагина '{self.folder_name}': нет файла {module_path}"
+            )
+        spec = importlib.util.spec_from_file_location(f"doc_types_{self.id}_flat_1c", module_path)
+        if spec is None or spec.loader is None:
+            raise ValueError(f"Не удалось загрузить {module_path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        fn = getattr(module, attr, None)
+        if not callable(fn):
+            raise ValueError(f"{module_path} не содержит функцию '{attr}'")
+        return fn
 
     @property
     def registry_json_name(self) -> str:

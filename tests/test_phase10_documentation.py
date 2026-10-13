@@ -196,7 +196,7 @@ def test_all_documented_env_vars_exist_in_code():
     """Каждая переменная, упомянутая в .env.example, реально читается кодом."""
     env_example = _read(".env.example")
     declared = set(re.findall(r"^#\s*(SCANREADER_[A-Z0-9_]+|OPENAI_[A-Z0-9_]+|AI_MODEL_NAME|"
-                              r"ENABLE_CACHE|LOG_LEVEL|NO_COLOR|VLM_TIMEOUT)=", env_example,
+                              r"ENABLE_[A-Z_]+|LOG_LEVEL|NO_COLOR|VLM_[A-Z0-9_]+)=", env_example,
                               re.MULTILINE))
     assert declared, "не найдено ни одной переменной в .env.example"
 
@@ -212,8 +212,8 @@ def test_env_vars_read_by_code_are_documented():
     code = "\n".join(
         p.read_text(encoding="utf-8", errors="replace") for p in SRC.rglob("*.py")
     )
-    used = set(re.findall(r'os\.getenv\(\s*"(SCANREADER_[A-Z0-9_]+|VLM_TIMEOUT|LOG_LEVEL|'
-                          r'ENABLE_CACHE|NO_COLOR|AI_MODEL_NAME|OPENAI_[A-Z0-9_]+)"', code))
+    used = set(re.findall(r'os\.getenv\(\s*"(SCANREADER_[A-Z0-9_]+|VLM_[A-Z0-9_]+|LOG_LEVEL|'
+                          r'ENABLE_[A-Z_]+|NO_COLOR|AI_MODEL_NAME|OPENAI_[A-Z0-9_]+)"', code))
     env_example = _read(".env.example")
     undocumented = sorted(
         name for name in used

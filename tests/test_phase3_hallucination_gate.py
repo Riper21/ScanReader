@@ -295,16 +295,24 @@ def test_declined_party_via_gate_produces_no_findings():
 
 
 # =========================================================================
-# Короткий эталон
+# Короткий эталон (P2.8)
 # =========================================================================
-def test_short_reference_returns_nothing():
+def test_short_reference_marks_gate_not_executed():
+    """P2.8: короткий эталон — маркер GATE_REFERENCE_TOO_SHORT, а не пустой
+    список, который вызывающий читал бы как «гейт пройден, находок нет»."""
     short = "текст"
     assert len(short) < MIN_REFERENCE_LENGTH
-    assert audit_cross_modal_consistency({"debtor": {"inn": "7707083890"}}, short, _spec()) == []
+    marker = audit_cross_modal_consistency({"debtor": {"inn": "7707083890"}}, short, _spec())
+    assert len(marker) == 1
+    assert marker[0]["reason"] == "GATE_REFERENCE_TOO_SHORT"
+    assert marker[0]["gate_executed"] is False
 
 
-def test_empty_reference_returns_nothing():
-    assert audit_cross_modal_consistency({"debtor": {"inn": "7707083890"}}, "", _spec()) == []
+def test_empty_reference_marks_gate_not_executed():
+    marker = audit_cross_modal_consistency({"debtor": {"inn": "7707083890"}}, "", _spec())
+    assert len(marker) == 1
+    assert marker[0]["reason"] == "GATE_REFERENCE_TOO_SHORT"
+    assert marker[0]["gate_executed"] is False
 
 
 def test_non_dict_payload_is_handled():

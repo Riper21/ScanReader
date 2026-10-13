@@ -36,6 +36,12 @@ FORMAT_KINDS = frozenset({"kpp", "oktmo", "uin_rosp", "doc_ref_number"})
 #: конкретные пути задаёт плагин (payment_details.bik, bank_requisites.account и т.п.).
 BANK_ROLES = ("bik", "account", "uin", "rosp_code", "kpp", "oktmo", "recipient_inn", "recipient_name")
 
+#: Категории сумм, которые умеет находить резервный финансовый сканер
+#: (core.finance_parser.extract_amounts_from_text). Словарь интерпретатора:
+#: каким путям документа соответствуют эти категории, решает плагин
+#: в блоке recovery файла verification.json.
+RECOVERY_SOURCES = frozenset({"total_rub", "main_debt_rub", "court_fee_rub", "penalty_rub"})
+
 
 def _as_paths(value: Any) -> List[str]:
     """Принимает строку или список строк и возвращает список."""
@@ -186,6 +192,41 @@ class VerificationSpec:
         self.gate_names: List[str] = [p for p in _as_paths(raw.get("gate_names")) if p]
         self.gate_authorities: List[str] = [p for p in _as_paths(raw.get("gate_authorities")) if p]
 
+        # P2.1: декларация резервного восстановления сумм (финансовый
+        # восстановитель фасада). Раньше имена полей и идентификаторы типов
+        # были захардкожены в facade.py, и ядро знало лексику плагинов.
+        #
+        # {"total_fields": ["finances.total_rub"], "fields": [
+        #     {"path": "finances.total_rub", "source": "total_rub", "always": true},
+        #     {"path": "finances.debt_amount_rub", "source": "main_debt_rub",
+        #      "fallback_source": "total_rub"}]}
+        #
+        # total_fields — «итоговые» поля, по пустоте которых решается запуск
+        # сканера. fields — что сканер может заполнить: source — категория
+        # суммы, fallback_source — категория-запас, always — заполнять и когда
+        # поле отсутствовало в ответе модели (по умолчанию заполняются только
+        # уже объявленные, но пустые поля).
+        self.recovery: Dict[str, Any] = {}
+        recovery = raw.get("recovery")
+        if isinstance(recovery, dict):
+            total_fields = [p for p in _as_paths(recovery.get("total_fields")) if p]
+            fields: List[Dict[str, Any]] = []
+            for item in recovery.get("fields", []) or []:
+                if not isinstance(item, dict):
+                    continue
+                path = str(item.get("path", "")).strip()
+                source = str(item.get("source", "")).strip()
+                if not path or not source:
+                    continue
+                fields.append({
+                    "path": path,
+                    "source": source,
+                    "fallback_source": str(item.get("fallback_source", "")).strip(),
+                    "always": bool(item.get("always", False)),
+                })
+            if total_fields or fields:
+                self.recovery = {"total_fields": total_fields, "fields": fields}
+
     # ------------------------------------------------------------------
     def is_empty(self) -> bool:
         return not (
@@ -222,6 +263,27 @@ class VerificationSpec:
         for item in self.identifier_checks:
             if item["severity"] not in ("error", "warning", "info"):
                 problems.append(f"{plugin_id}: некорректный severity '{item['severity']}'")
+        if self.recovery:
+            for rule in self.recovery["fields"]:
+                source = rule["source"]
+                if source not in RECOVERY_SOURCES:
+                    problems.append(
+                        f"{plugin_id}: recovery-поле '{rule['path']}' ссылается на неизвестный источник "
+                        f"'{source}'. Допустимо: {', '.join(sorted(RECOVERY_SOURCES))}"
+                    )
+                fallback = rule["fallback_source"]
+                if fallback and fallback not in RECOVERY_SOURCES:
+                    problems.append(
+                        f"{plugin_id}: recovery-поле '{rule['path']}' ссылается на неизвестный "
+                        f"fallback_source '{fallback}'. Допустимо: {', '.join(sorted(RECOVERY_SOURCES))}"
+                    )
+            known_paths = {rule["path"] for rule in self.recovery["fields"]}
+            for path in self.recovery["total_fields"]:
+                if path not in known_paths:
+                    problems.append(
+                        f"{plugin_id}: recovery-поле '{path}' объявлено в total_fields, "
+                        f"но отсутствует в fields — сканер не знает, чем его заполнить"
+                    )
         return problems
 
     # ------------------------------------------------------------------
@@ -251,6 +313,9 @@ class VerificationSpec:
             paths.append(item["path"])
         paths.extend(self.gate_names)
         paths.extend(self.gate_authorities)
+        if self.recovery:
+            paths.extend(self.recovery["total_fields"])
+            paths.extend(rule["path"] for rule in self.recovery["fields"])
         return paths
 
     def validate_paths(self, schema_cls: Any, plugin_id: str) -> List[str]:
@@ -319,6 +384,11 @@ def _path_exists_in_schema(schema_cls: Any, path: str) -> bool:
         if ok:
             return True
     return False
+
+
+def path_exists_in_schema(schema_cls: Any, path: str) -> bool:
+    """Публичная обёртка над _path_exists_in_schema (для type_registry)."""
+    return _path_exists_in_schema(schema_cls, path)
 
 
 _SPEC_CACHE: Dict[str, VerificationSpec] = {}
@@ -399,6 +469,63 @@ def get_nested_value(data: Any, path: str) -> Any:
         if ok and curr is not None:
             return curr
     return None
+
+
+def path_is_declared(data: Any, path: str) -> bool:
+    """
+    Объявлен ли в данных сам путь (пусть даже со значением None).
+
+    Отличие от get_nested_value: «поле есть, но пустое» и «поля нет» —
+    разные ситуации для финансового восстановителя: без флага always
+    заполняются только поля, которые модель объявила.
+    """
+    if not path or not isinstance(data, dict):
+        return False
+    for alternative in path.split("|"):
+        alternative = alternative.strip()
+        if not alternative:
+            continue
+        curr: Any = data
+        ok = True
+        for part in alternative.split("."):
+            if isinstance(curr, dict) and part in curr:
+                curr = curr[part]
+            else:
+                ok = False
+                break
+        if ok:
+            return True
+    return False
+
+
+def set_nested_value(data: Any, path: str, value: Any) -> None:
+    """
+    Запись значения по точечному пути (с |-альтернативами).
+
+    Запись идёт в первую ОБЪЯВЛЕННУЮ альтернативу; если ни одна не объявлена,
+    создаётся первая. Промежуточные словари создаются по необходимости.
+    Некорректные входы (не словарь, пустой путь) игнорируются без исключений:
+    восстановитель не имеет права уронить конвейер.
+    """
+    if not isinstance(data, dict):
+        return
+    alternatives = [a.strip() for a in (path or "").split("|") if a.strip()]
+    if not alternatives:
+        return
+    target = alternatives[0]
+    for alternative in alternatives:
+        if path_is_declared(data, alternative):
+            target = alternative
+            break
+    curr: Any = data
+    parts = target.split(".")
+    for part in parts[:-1]:
+        nxt = curr.get(part)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            curr[part] = nxt
+        curr = nxt
+    curr[parts[-1]] = value
 
 
 def first_present(data: Any, paths: Sequence[str]) -> Tuple[Any, Optional[str]]:

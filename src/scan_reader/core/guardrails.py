@@ -93,11 +93,18 @@ def validate_ip_number_format(ip_num: Optional[str]) -> Tuple[bool, float]:
     return False, 30.0
 
 
-def _check_percentage_limit(value: Any, data: Dict[str, Any]) -> bool:
+def _check_percentage_limit(value: Any, data: Dict[str, Any], plugin_id: str = "") -> bool:
     from ..verifier.math_verifier import split_deduction_basis, verify_deduction_percentage
+    from ..verifier.spec import resolve_spec
 
+    # P2.1: пути полей-оснований к лимиту (алименты / вред здоровью) объявляет
+    # плагин в verification.json → deduction_limit.basis_fields. Ядро не хранит
+    # список имён полей; для плагина без декларации основание неизвестно, и
+    # применяется общий потолок ст. 99 229-ФЗ.
+    limit = resolve_spec(plugin_id).deduction_limit if plugin_id else None
+    basis_paths = list((limit or {}).get("basis_fields") or [])
     subject = " ".join(
-        str(data.get(k) or "") for k in ("claim_subject", "claim", "subject", "deduction_basis")
+        str(get_nested(data, p) or "") for p in basis_paths
     ).lower()
     # P1.1: основания разделены (вред здоровью — без потолка, ФЗ 314-ФЗ).
     has_alimony, has_harm = split_deduction_basis(subject)
@@ -105,7 +112,12 @@ def _check_percentage_limit(value: Any, data: Dict[str, Any]) -> bool:
     return ok
 
 
-def evaluate_rule(rule_type: str, value: Any, data: Optional[Dict[str, Any]] = None) -> Tuple[bool, str]:
+def evaluate_rule(
+    rule_type: str,
+    value: Any,
+    data: Optional[Dict[str, Any]] = None,
+    plugin_id: str = "",
+) -> Tuple[bool, str]:
     """
     Выполняет одно правило autonomous.json.
 
@@ -150,7 +162,7 @@ def evaluate_rule(rule_type: str, value: Any, data: Optional[Dict[str, Any]] = N
     if rule_type == "deduction_limit":
         if not value:
             return True, ""
-        return _check_percentage_limit(value, data), ""
+        return _check_percentage_limit(value, data, plugin_id), ""
 
     if rule_type in ("valid_inn", "valid_snils", "valid_ogrn", "valid_bik"):
         if not value:
@@ -201,7 +213,7 @@ def run_guardrails(
         message = rule.get("message", f"Ошибка проверки {field_path}")
         value = get_nested(data, field_path)
 
-        is_valid, note = evaluate_rule(rule_type, value, data)
+        is_valid, note = evaluate_rule(rule_type, value, data, plugin_id)
         if note:
             unknown.append({
                 "field": field_path,
