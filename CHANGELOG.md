@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names, `flat_columns` column sets of all 9 plugins, and the public
   facade method set cross-checked against STABILITY. 830 tests
   (was 813).
+- Final adversarial measurements `docs/measurements/risks-1.0.0.{json,md}`
+  (seed 20260928): all functional metrics identical to 0.9.6 — the
+  extraction pipeline did not change; only machine-noise timings moved.
+  Measurement caveats: 23 de-identified reference documents,
+  adversarial variations, `accuracy_is_real: false` — real FSSP scans
+  do not enter the repository, so absolute numbers are optimistic.
 
 ## [0.9.6] - 2026-10-14
 
