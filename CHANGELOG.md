@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.6] - 2026-10-14
 
 Plugin isolation in core (phase P2 of the multi-agent audit, Rule 3 of
 AGENTS.md): the pipeline, verifier and exporter stop knowing document
@@ -213,6 +213,28 @@ PyMuPDF module name (follow-up): the codebase migrates from the legacy
   already warn — the migration removes that future breakage. The SWIG
   `__module__`-attribute DeprecationWarnings emitted by `pymupdf.mupdf`
   in the 1.26.5 wheels are unrelated to the alias and stay visible.
+
+Release documentation and measurements: the user guide is aligned with
+the actual platform composition; risks re-measured at HEAD.
+
+### Documentation
+
+- `docs/measurements/risks-0.9.6.{json,md}` — a rerun of the adversarial
+  harness (SEED=20260928, offline; reproduce with
+  `py -3 scripts/corpus/measure_risks.py`). Deltas vs 0.9.3: gate false
+  positives at 1/2/5/10 % noise rose to 22.0/39.1/75.4/89.8 % (from
+  21.5/38.5/73.5/89.1) — the gate got stricter after P1/P4, which is
+  honesty, not an extraction regression; C.1 and C.4 are unchanged.
+- User guide: a VLM reliability variables table in section 4 (HTTP/slot
+  timeouts, attempts, the router confidence floor, the OCR gate,
+  `SCANREADER_ALLOWED_DIRS`); section 7 now lists all nine plugins
+  instead of three; honest semantics of the consolidated registry (a
+  batch run writes its own batch; a full rebuild from `_Full` is
+  `scan-reader export`); `pymupdf>=1.24.3` in the dependency table; the
+  test count updated.
+- Package version synced to 0.9.6 across `pyproject.toml`,
+  `__init__.py`, `requirements.txt`, the Windows install script and the
+  user guide.
 
 ## [0.9.5] - 2026-10-13
 
