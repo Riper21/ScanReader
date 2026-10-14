@@ -61,8 +61,15 @@ ScanReader построен на расширяемой архитектуре �
 
 ## Установка
 
-### Базовая установка библиотеки
+### Установка из PyPI (рекомендуется)
 ```bash
+pip install scan-reader
+```
+
+### Установка из исходников
+```bash
+git clone https://github.com/Riper21/ScanReader.git
+cd ScanReader
 pip install .
 ```
 
@@ -88,10 +95,10 @@ scan-reader --version
 
 ```bash
 # CPU, ~15 МБ, тот же движок, что и в PaddleOCR
-pip install ".[ocr]"
+pip install "scan-reader[ocr]"
 
 # PaddleOCR с поддержкой GPU и широким языковым покрытием
-pip install ".[ocr-full]"
+pip install "scan-reader[ocr-full]"
 ```
 
 После установки `scan-reader doctor` покажет активный бэкенд.

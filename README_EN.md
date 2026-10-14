@@ -61,8 +61,15 @@ ScanReader features a plug-and-play plugin architecture (`TypeRegistry`) providi
 
 ## Installation
 
-### Base Installation
+### Install from PyPI (recommended)
 ```bash
+pip install scan-reader
+```
+
+### Install from source
+```bash
+git clone https://github.com/Riper21/ScanReader.git
+cd ScanReader
 pip install .
 ```
 
@@ -85,10 +92,10 @@ Without an OCR engine the cross-modal gate for **scans** falls back to a transcr
 
 ```bash
 # CPU, ~15 MB, same engine family as PaddleOCR
-pip install ".[ocr]"
+pip install "scan-reader[ocr]"
 
 # PaddleOCR with GPU support and broader language coverage
-pip install ".[ocr-full]"
+pip install "scan-reader[ocr-full]"
 ```
 
 After installation `scan-reader doctor` reports the active backend.

@@ -186,7 +186,7 @@ def test_agents_md_states_ocr_does_not_apply_to_harm():
 def test_docs_mention_ocr_extra():
     for doc in ("README.md", "README_EN.md"):
         text = _read(doc)
-        assert '".[ocr]"' in text, f"{doc}: не описан extra [ocr]"
+        assert '"scan-reader[ocr]"' in text, f"{doc}: не описан extra [ocr]"
 
 
 # =========================================================================
