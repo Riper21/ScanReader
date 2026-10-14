@@ -24,7 +24,8 @@ REPO = Path(__file__).resolve().parent.parent
 SRC = REPO / "src" / "scan_reader"
 
 DOC_FILES = ("README.md", "README_EN.md", "ARCHITECTURE.md", "ARCHITECTURE_RU.md",
-             "AGENTS.md", "SECURITY.md", "SECURITY_RU.md", "docs/USER_GUIDE_RU.md")
+             "AGENTS.md", "SECURITY.md", "SECURITY_RU.md",
+             "STABILITY.md", "STABILITY_RU.md", "docs/USER_GUIDE_RU.md")
 
 
 def _read(name):

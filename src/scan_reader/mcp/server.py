@@ -26,6 +26,11 @@ from ..core.utils import get_logger
 from ..facade import LegalDocPlatformFacade
 from ..verifier.auditor import ZeroTrustAuditor
 
+#: Версия wire-контракта JSON-RPC-интерфейса. Заморожена политикой
+#: стабильности (STABILITY.md, раздел 3): каждый ответ конверта несёт это
+#: поле, изменения контракта до 2.0.0 — только additive.
+PROTOCOL_VERSION = "1.0"
+
 _srv_logger = get_logger("mcp.server")
 
 
@@ -309,7 +314,12 @@ def handle_jsonrpc(request: Dict[str, Any], server: Optional[ScanReaderMCPServer
     params = request.get("params", {})
 
     if method == "tools/list":
-        return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": srv.list_tools()}}
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "protocol_version": PROTOCOL_VERSION,
+            "result": {"tools": srv.list_tools()},
+        }
     elif method == "tools/call":
         tool_name = params.get("name")
         args = params.get("arguments", {})
@@ -317,12 +327,14 @@ def handle_jsonrpc(request: Dict[str, Any], server: Optional[ScanReaderMCPServer
         return {
             "jsonrpc": "2.0",
             "id": req_id,
+            "protocol_version": PROTOCOL_VERSION,
             "result": {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False, indent=2)}]},
         }
     else:
         return {
             "jsonrpc": "2.0",
             "id": req_id,
+            "protocol_version": PROTOCOL_VERSION,
             "error": {"code": -32601, "message": f"Method not found: {method}"},
         }
 
@@ -343,6 +355,7 @@ def run_stdio_server() -> None:
             err_resp = {
                 "jsonrpc": "2.0",
                 "id": None,
+                "protocol_version": PROTOCOL_VERSION,
                 "error": {"code": -32700, "message": f"Parse error: {e}"},
             }
             sys.stdout.write(json.dumps(err_resp, ensure_ascii=False) + "\n")

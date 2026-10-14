@@ -6,6 +6,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `protocol_version` field in every JSON-RPC response envelope
+  (`PROTOCOL_VERSION = "1.0"` in `scan_reader.mcp.server`). Additive and
+  backward compatible.
+- `STABILITY.md` / `STABILITY_RU.md`: the public stability contract —
+  six frozen surfaces, SemVer policy (additive-only until 2.0.0),
+  deprecation policy, Python floor and dependency floors.
+- Contract guard tests (`tests/test_contract_guards.py`): frozen CLI
+  surface (subcommands, flags, format choices, exit codes), JSON-RPC
+  tool contracts, verification and document status vocabularies,
+  Full-record keys, verification report keys, environment variable
+  names, `flat_columns` column sets of all 9 plugins, and the public
+  facade method set cross-checked against STABILITY. 830 tests
+  (was 813).
+
 ## [0.9.6] - 2026-10-14
 
 Plugin isolation in core (phase P2 of the multi-agent audit, Rule 3 of
