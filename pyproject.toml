@@ -41,6 +41,12 @@ keywords = [
     "fssp", "court-orders", "1c", "excel-registry", "mcp"
 ]
 
+[project.urls]
+Homepage = "https://github.com/Riper21/ScanReader"
+Repository = "https://github.com/Riper21/ScanReader"
+Changelog = "https://github.com/Riper21/ScanReader/blob/main/CHANGELOG.md"
+Issues = "https://github.com/Riper21/ScanReader/issues"
+
 [project.optional-dependencies]
 # OCR для кросс-модальной верификации сканов. Без него проект работает, но
 # гейт для изображений опирается только на VLM-транскрипцию (независимый канал).

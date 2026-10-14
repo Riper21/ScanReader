@@ -1,0 +1,43 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      # OIDC-токен для Trusted Publishing (pypa/gh-action-pypi-publish).
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - name: Install development package
+        run: python -m pip install --upgrade pip && python -m pip install ".[dev]" twine
+      - name: Run tests
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python -m pytest -p no:cacheprovider -q
+      - name: Build distributions
+        run: python -m build
+      - name: Check metadata
+        run: python -m twine check dist/*
+      - name: Publish to PyPI
+        # Аутентификация — один из вариантов:
+        # 1) Trusted Publishing (рекомендуется): на pypi.org в настройках
+        #    проекта scan-reader зарегистрировать publisher — owner Riper21,
+        #    repo ScanReader, workflow release.yml, environment pypi.
+        # 2) API-токен: создать в репозитории секрет PYPI_API_TOKEN
+        #    и раскомментировать password ниже.
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # with:
+        #   password: ${{ secrets.PYPI_API_TOKEN }}
