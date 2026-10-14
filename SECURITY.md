@@ -8,7 +8,8 @@ Security updates are applied to the latest minor version:
 
 | Version | Supported |
 | :--- | :--- |
-| `0.9.x` | ✅ Yes |
+| `1.0.x` | ✅ Yes |
+| `0.9.x` | ❌ No |
 | `< 0.9` | ❌ No |
 
 > Verification semantics changed incompatibly in `0.9.1`: documents with a

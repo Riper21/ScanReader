@@ -6,7 +6,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] - 2026-10-14
+
+First release with a public stability promise (plan 04). The behavior
+of the extraction pipeline is unchanged from 0.9.6; what is new is the
+contract around it.
+
+### Stability
+
+- `STABILITY.md` / `STABILITY_RU.md` freeze six public surfaces:
+  Python API (`LegalDocPlatformFacade`), CLI (subcommands, flags, exit
+  codes), JSON payload keys, the JSON-RPC wire protocol
+  (`protocol_version`), the `doc_types/` plugin contract, and
+  environment variables. Until 2.0.0 changes are additive-only.
+- Deprecations carry `DeprecationWarning` for at least one minor
+  version; `requires-python >= 3.9` and dependency floors hold until
+  2.0.0.
+- Contract guard tests fail CI on undocumented surface changes —
+  a breaking change is a test failure here, not a surprise for a PyPI
+  consumer.
 
 ### Added
 
