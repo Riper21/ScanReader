@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Incident "the `л/с` label of the personal account is lost inside
+  `payment_details.recipient`" (salary_deductions: weak-model copy
+  degradation). 887 tests (was 878):
+  - Prompt contract: `recipient` is now declared as a verbatim copy
+    including the personal account label («л/с 05401А53690»), plus a JSON
+    escaping rule for the backslash form («л\с» must be emitted as «л\\с»).
+    The old example demonstrated the recipient WITHOUT the label, teaching
+    the model to drop it.
+  - Detector: `payment_details.recipient` is declared in `gate_fields` of
+    `salary_deductions/verification.json` (min_length 20). A degraded value
+    (label dropped mid-string) is no longer corroborated by the raw text —
+    `HALLUCINATION_RISK` sends the document to review; a verbatim value
+    passes. A slash-form mismatch («л/с» vs «л\с») is deliberately a
+    discrepancy: manual review instead of a silent pass. Measurement
+    caveat: values shorter than 20 chars skip the check (noise guard);
+    the benchmark score is unaffected (recipient is not in benchmark.json —
+    blocked by absent ground truth).
+
 - Incident "result header is correct, but `data.doc_type` is an `unknown`
   placeholder" (silent degradation after an unnoticed model swap). Barrier
   pack Б1–Б4, 878 tests (was 813):

@@ -318,3 +318,78 @@ def test_empty_reference_marks_gate_not_executed():
 def test_non_dict_payload_is_handled():
     assert audit_cross_modal_consistency("строка", RAW, _spec()) == []
     assert audit_cross_modal_consistency(None, RAW, _spec()) == []
+
+
+# =========================================================================
+# Инцидент «л/с»: потеря обозначения лицевого счёта в recipient
+# =========================================================================
+# Реальный кейс: модель скопировала блок получателя целиком, но выбросила
+# метку «л\с» перед номером лицевого счёта. Обозначение — 2 буквы вне класса
+# разделителей _SEP_OPT, поэтому трёхсимвольный разрыв посреди строки не
+# подтверждается ни строгим паттерном, ни мягким матчем (.{0,1} на символ).
+RECIPIENT_RAW = (
+    "Постановление об обращении взыскания на заработную плату. "
+    "Перечислять удержания: УФК по Нижегородской области (ОСП по "
+    "Октябрьскому району г.Кирова ГУФССП России по Кировской области "
+    "л\\с 05401А53690), БИК 015004950."
+)
+
+_RECIPIENT_SPEC = VerificationSpec({
+    "gate_fields": [{"path": "payment_details.recipient", "min_length": 20}],
+})
+
+
+def test_recipient_with_ls_label_is_confirmed():
+    """Дословный recipient с «л\с» подтверждается текстом документа."""
+    value = (
+        "УФК по Нижегородской области (ОСП по Октябрьскому району "
+        "г.Кирова ГУФССП России по Кировской области л\\с 05401А53690)"
+    )
+    assert check_presence_in_raw_text(value, RECIPIENT_RAW) is True
+
+
+def test_recipient_ls_label_loss_is_not_confirmed():
+    """Инцидент: recipient без метки «л\с» перед номером счёта — расхождение."""
+    degraded = (
+        "УФК по Нижегородской области (ОСП по Октябрьскому району "
+        "г.Кирова ГУФССП России по Кировской области 05401А53690)"
+    )
+    assert check_presence_in_raw_text(degraded, RECIPIENT_RAW) is False
+
+
+def test_recipient_slash_form_must_match_document():
+    """Форма слэша обязана совпадать с документом: «л/с» против «л\с» —
+    расхождение (разные литералы слэша, а не разделитель). Консервативно:
+    расхождение уходит на ручной обзор, а не молча признаётся совпадением."""
+    fwd_slash = (
+        "УФК по Нижегородской области (ОСП по Октябрьскому району "
+        "г.Кирова ГУФССП России по Кировской области л/с 05401А53690)"
+    )
+    assert check_presence_in_raw_text(fwd_slash, RECIPIENT_RAW) is False
+
+
+def test_recipient_short_value_skips_gate_check():
+    """Короче min_length значение не проверяется (шумовая защита гейта)."""
+    doc = {"payment_details": {"recipient": "УФК по области"}}
+    findings = audit_cross_modal_consistency(doc, RECIPIENT_RAW, _RECIPIENT_SPEC)
+    assert findings == []
+
+
+def test_degraded_recipient_via_gate_produces_finding():
+    """Интеграция: обрезок recipient даёт находку гейта по полю плагина."""
+    doc = {"payment_details": {"recipient": (
+        "УФК по Нижегородской области (ОСП по Октябрьскому району "
+        "г.Кирова ГУФССП России по Кировской области 05401А53690)"
+    )}}
+    findings = audit_cross_modal_consistency(doc, RECIPIENT_RAW, _RECIPIENT_SPEC)
+    assert len(findings) == 1
+    assert findings[0]["field"] == "payment_details.recipient"
+    assert "not corroborated" in findings[0]["reason"]
+
+
+def test_intact_recipient_via_gate_produces_no_findings():
+    doc = {"payment_details": {"recipient": (
+        "УФК по Нижегородской области (ОСП по Октябрьскому району "
+        "г.Кирова ГУФССП России по Кировской области л\\с 05401А53690)"
+    )}}
+    assert audit_cross_modal_consistency(doc, RECIPIENT_RAW, _RECIPIENT_SPEC) == []

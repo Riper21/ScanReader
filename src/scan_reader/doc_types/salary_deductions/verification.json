@@ -53,6 +53,7 @@
     {"path": "finances.total_deduction_rub", "min_length": 3},
     {"path": "finances.debt_amount_rub", "min_length": 3},
     {"path": "payment_details.recipient_inn", "min_length": 10},
+    {"path": "payment_details.recipient", "min_length": 20},
     {"path": "payment_details.bik", "min_length": 8},
     {"path": "payment_details.uin", "min_length": 20},
     {"path": "ip_number", "min_length": 5},

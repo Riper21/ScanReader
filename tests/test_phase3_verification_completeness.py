@@ -412,6 +412,44 @@ def test_p4_upd_shipper_inn_confirmed_by_text_passes():
 
 
 # =========================================================================
+# P4.7 (инцидент «л/с»): recipient зарплатных постановлений под гейтом
+# =========================================================================
+_LS_RAW = (
+    "Перечислять удержания: УФК по Нижегородской области (ОСП по "
+    "Октябрьскому району г.Кирова ГУФССП России по Кировской области "
+    "л\\с 05401А53690), БИК 015004950."
+)
+
+
+def test_p4_salary_recipient_declared_in_gate_fields():
+    """Спека плагина обязана сверять получателя с текстом документа:
+    до инцидента recipient не состоял ни в gate_fields, ни в gate_names,
+    и потеря обозначения «л\с» проходила молча."""
+    spec = resolve_spec("salary_deductions")
+    entries = [g for g in spec.gate_fields if g["path"] == "payment_details.recipient"]
+    assert entries, "payment_details.recipient отсутствует в gate_fields salary_deductions"
+    assert entries[0]["min_length"] >= 15
+
+
+def test_p4_salary_degraded_recipient_is_hallucination_risk():
+    doc = {"payment_details": {"recipient": (
+        "УФК по Нижегородской области (ОСП по Октябрьскому району "
+        "г.Кирова ГУФССП России по Кировской области 05401А53690)"
+    )}}
+    report = A.audit_document(doc, doc_type="salary_deductions", raw_ocr_text=_LS_RAW)
+    assert "HALLUCINATION_RISK" in _codes(report)
+
+
+def test_p4_salary_intact_recipient_passes_gate():
+    doc = {"payment_details": {"recipient": (
+        "УФК по Нижегородской области (ОСП по Октябрьскому району "
+        "г.Кирова ГУФССП России по Кировской области л\\с 05401А53690)"
+    )}}
+    report = A.audit_document(doc, doc_type="salary_deductions", raw_ocr_text=_LS_RAW)
+    assert "HALLUCINATION_RISK" not in _codes(report)
+
+
+# =========================================================================
 # P4.6: ущерб от преступления — четвёртый случай 70% по ст. 99 ч. 2 229-ФЗ
 # =========================================================================
 def test_p4_crime_damage_basis_allows_up_to_70():
