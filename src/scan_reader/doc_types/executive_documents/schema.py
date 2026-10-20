@@ -3,7 +3,7 @@ import re
 from typing import Optional, Any
 from pydantic import BaseModel, Field, field_validator
 from scan_reader.core.finance_parser import parse_russian_currency
-from scan_reader.core.fields import ValidatedPartyMixin, digits_only
+from scan_reader.core.fields import DocTypeGuardMixin, ValidatedPartyMixin, digits_only
 from scan_reader.core.utils import coerce_to_str
 
 
@@ -52,7 +52,7 @@ class ExecFinances(BaseModel):
         return coerce_to_str(v)
 
 
-class ExecutiveDocumentDoc(BaseModel):
+class ExecutiveDocumentDoc(DocTypeGuardMixin):
     __test__ = False
     file_name: str = Field(default="", description="Имя файла документа")
     doc_type: str = Field(default="Исполнительный лист", description="Тип документа")

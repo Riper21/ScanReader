@@ -22,6 +22,7 @@ from typing import Dict, Any, List, Optional, Tuple, Union
 from . import config as _config
 
 from .core.utils import _safe_parse_json, env_float, get_logger
+from .core.fields import is_doc_type_placeholder
 from .core.token_tracker import TokenUsageTracker
 from .core.rate_limiter import RateLimiter
 from .core.cache import LLMResponseCache
@@ -92,6 +93,26 @@ def _vlm_http_timeout() -> float:
         except ValueError:
             logger.warning(f"VLM_TIMEOUT='{legacy}' не число — используется 600.")
     return env_float("VLM_HTTP_TIMEOUT", 600.0)
+
+
+def _plugin_doc_type_default(plugin: Optional[Any]) -> Optional[str]:
+    """
+    Б2: канонический вид документа из ДЕКЛАРАЦИИ ПЛАГИНА — default поля
+    doc_type его схемы. Ядро не хранит ни одного имени типа (Правило 3):
+    если плагин не объявил поле или его default сам является заглушкой,
+    нормализация не выполняется и защита остаётся за схемой (Б1).
+    """
+    if plugin is None:
+        return None
+    try:
+        field = plugin.schema_cls.model_fields.get("doc_type")
+    except Exception as e:  # noqa: BLE001 — декларация не должна ронять конвейер
+        logger.debug(f"Не прочитано поле doc_type схемы плагина '{plugin.id}': {e}")
+        return None
+    default = getattr(field, "default", None) if field is not None else None
+    if isinstance(default, str) and default.strip() and not is_doc_type_placeholder(default):
+        return default
+    return None
 
 
 logger = get_logger("facade")
@@ -531,6 +552,19 @@ class LegalDocPlatformFacade:
         if use_vlm_fallback and (candidate is None or candidate[1] < 0.95):
             dt, conf, method, _ = self.classify_via_vlm(file_path)
             if dt != UNKNOWN_CATEGORY:
+                # Б4: уверенная эвристика (>= 0.90 — совпадение ключевого слова
+                # пути или сильного текстового маркера) не перекрывается слабым
+                # мнением роутера. Раньше любой ответ роутера с conf >= 0.5
+                # заменял верную гипотезу 0.90/0.92, и деградировавшая модель
+                # уводила документ в чужую ветку экстракции.
+                override_min = env_float("VLM_ROUTER_OVERRIDE_MIN", 0.85)
+                if candidate is not None and candidate[1] >= 0.90 and conf < override_min:
+                    logger.warning(
+                        f"Роутер предложил '{dt}' (conf={conf} < {override_min}) — "
+                        f"мнение слишком слабое, чтобы перекрыть уверенную гипотезу "
+                        f"'{candidate[0]}' (conf={candidate[1]}, {candidate[2]})."
+                    )
+                    return candidate
                 return dt, conf, method
 
         if candidate is not None:
@@ -655,6 +689,11 @@ class LegalDocPlatformFacade:
                 if cached_hit is not None:
                     if "raw_reply" in parsed and "raw_reply" not in cached_hit:
                         cached_hit["raw_reply"] = parsed["raw_reply"]
+                    # Б2: маркер нормализации doc_type выбрасывается схемой
+                    # (extra='ignore') — восстанавливается из кэш-записи, чтобы
+                    # повторный прогон видел тот же WARNING, что и первый.
+                    if "_doc_type_normalized" in parsed and "_doc_type_normalized" not in cached_hit:
+                        cached_hit["_doc_type_normalized"] = parsed["_doc_type_normalized"]
                     self.tracker.record_call(
                         model=self.model_name,
                         is_cache_hit=True,
@@ -755,6 +794,28 @@ class LegalDocPlatformFacade:
         parsed_data["file_name"] = base_name
 
         # ---------------------------------------------------------------------
+        # Б2 (симптом doc_type): маршрут верен, но модель вернула заглушку
+        # вида документа («unknown», «не определен»...). Раньше она молча
+        # проходила схему (doc_type: str без ограничений) и попадала в тело
+        # результата при верной шапке, вводя оператора в заблуждение.
+        # Каноническое значение берётся из декларации плагина (default поля
+        # doc_type схемы), исходная заглушка сохраняется в маркере
+        # _doc_type_normalized и доезжает до validation.issues как WARNING.
+        # ---------------------------------------------------------------------
+        doc_type_normalized_from: Optional[str] = None
+        canonical_doc_type = _plugin_doc_type_default(plugin)
+        if canonical_doc_type and isinstance(parsed_data, dict):
+            model_doc_type = parsed_data.get("doc_type")
+            if is_doc_type_placeholder(model_doc_type):
+                doc_type_normalized_from = str(model_doc_type).strip() or "None"
+                parsed_data["doc_type"] = canonical_doc_type
+                logger.warning(
+                    f"Модель вернула заглушку doc_type ({doc_type_normalized_from!r}) "
+                    f"для '{base_name}': вид документа восстановлен из декларации "
+                    f"плагина '{doc_type}'."
+                )
+
+        # ---------------------------------------------------------------------
         # 💰 ФИНАНСОВЫЙ ВОССТАНОВИТЕЛЬ (FINANCIAL RECOVERY FALLBACK)
         # ---------------------------------------------------------------------
         # Если в извлеченных данных суммы не заполнены, сканируем текст ответа
@@ -845,6 +906,12 @@ class LegalDocPlatformFacade:
 
         if recovered_by_regex:
             validated_dict["_recovered_by_regex"] = sorted(set(recovered_by_regex))
+
+        # Б2: маркер нормализации doc_type живёт рядом с _recovered_by_regex —
+        # те же правила выживания: extra='ignore' у схемы выбрасывает ключ
+        # из model_dump, поэтому он навешивается обратно (как raw_reply).
+        if doc_type_normalized_from is not None:
+            validated_dict["_doc_type_normalized"] = doc_type_normalized_from
 
         # P0.6: провальные и эвристические ответы не кэшируются. Раньше ответ
         # без JSON (raw_reply) или с суммами, восстановленными регексом,
@@ -1099,10 +1166,32 @@ class LegalDocPlatformFacade:
             failure_reason = str(extracted.get("error", "extraction failed"))
 
         # 3. Валидация Guardrails и расчет Quality Score (%)
+        validation: Dict[str, Any]
         if extraction_failed:
             validation = {"passed": False, "score": 0.0, "errors": [failure_reason], "rules_total": 0, "rules_passed": 0}
         else:
             validation = self.validate_document(extracted, doc_type=doc_type)
+
+        # Б2: заглушка doc_type в ответе модели — видимый WARNING, а не тихая
+        # замена. Значение восстановлено из декларации плагина (см.
+        # extract_document_data), оператор обязан видеть сам факт деградации.
+        doc_type_placeholder = ""
+        if isinstance(extracted, dict):
+            doc_type_placeholder = str(extracted.get("_doc_type_normalized") or "")
+        if doc_type_placeholder:
+            validation.setdefault("issues", []).append(
+                {
+                    "field": "doc_type",
+                    "severity": "WARNING",
+                    "message": (
+                        f"Модель вернула заглушку вида документа "
+                        f"«{doc_type_placeholder}» при верной маршрутизации "
+                        f"('{doc_type}'); в data.doc_type записано каноническое "
+                        f"значение из декларации плагина"
+                    ),
+                }
+            )
+            validation["passed"] = False
 
         # Загрузка ground truth при наличии для бенчмарка
         gt_data = None

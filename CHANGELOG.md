@@ -6,6 +6,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Incident "result header is correct, but `data.doc_type` is an `unknown`
+  placeholder" (silent degradation after an unnoticed model swap). Barrier
+  pack Б1–Б4, 878 tests (was 813):
+  - `core.fields.DocTypeGuardMixin` (Б1): root plugin schemas declaring
+    `doc_type` (enforcement_orders, executive_documents, salary_deductions)
+    reject placeholder document types ("unknown", "не определен", empty) at
+    the schema level (Rule 6). The universal schema and nested models are
+    deliberate exceptions.
+  - Facade (Б2): a placeholder or missing `doc_type` in the model reply is
+    restored with the canonical value from the plugin declaration (the
+    schema field default); the substitution is marked with the
+    `_doc_type_normalized` marker in `data` and a WARNING in
+    `validation.issues` (`validation.passed = false`) — no more silent
+    substitution (Rule 1). Cache hits return the same marker.
+  - `VLM_ROUTER_OVERRIDE_MIN` (0.85, Б4): a weak VLM router opinion no
+    longer overrides a confident classification heuristic (>= 0.90); the
+    P2.5 behavior (the router may refute a hypothesis when confident
+    enough) is preserved. Variable documented in REQUIREMENTS_RU.md §4.3.
+  - Б3 (no code change, locked by a test): the flat 1C record `DocType` and
+    Excel grouping come from the result header (routing), not from
+    `data.doc_type` — a placeholder in the body cannot poison the export.
+
 ## [1.0.0] - 2026-10-14
 
 First release with a public stability promise (plan 04). The behavior

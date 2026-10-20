@@ -2,7 +2,7 @@
 from typing import Optional, Any
 from pydantic import BaseModel, Field, field_validator
 from scan_reader.core.finance_parser import parse_russian_currency
-from scan_reader.core.fields import ValidatedPartyMixin
+from scan_reader.core.fields import DocTypeGuardMixin, ValidatedPartyMixin
 from scan_reader.core.utils import coerce_to_str, normalize_ip_number
 
 
@@ -64,7 +64,7 @@ class FinancesInfo(BaseModel):
         return coerce_to_str(v)
 
 
-class EnforcementOrderDoc(BaseModel):
+class EnforcementOrderDoc(DocTypeGuardMixin):
     __test__ = False
     file_name: str = Field(default="", description="Имя файла документа")
     doc_type: str = Field(default="Заявление взыскателя о возбуждении ИП", description="Тип документа")

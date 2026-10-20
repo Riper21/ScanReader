@@ -3,6 +3,7 @@ import re
 from typing import Optional, Any
 from pydantic import BaseModel, Field, field_validator
 from scan_reader.core.fields import (
+    DocTypeGuardMixin,
     INN_PATTERN,
     KPP_PATTERN,
     ValidatedBankMixin,
@@ -182,7 +183,7 @@ class PaymentDetailsInfo(ValidatedBankMixin):
         return cleaned
 
 
-class SalaryDeductionDoc(BaseModel):
+class SalaryDeductionDoc(DocTypeGuardMixin):
     __test__ = False
     file_name: str = Field(default="", description="Имя файла документа")
     doc_type: str = Field(default="Постановление об обращении взыскания на заработную плату и иные доходы должника", description="Тип документа")
