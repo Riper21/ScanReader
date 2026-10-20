@@ -93,6 +93,7 @@ def facade(tmp_path):
     f.base_url = "http://localhost:0/v1"
     f.api_key = "test-key"
     f.model_name = "test-vlm"
+    f.fast_model_name = None
     f._client = None
     f.processor = FileProcessor()
     f.auditor = ZeroTrustAuditor()

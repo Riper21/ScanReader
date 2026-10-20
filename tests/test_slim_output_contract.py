@@ -85,6 +85,7 @@ def test_stage5_does_not_write_metrics_xlsx(tmp_path, capsys):
     facade = LegalDocPlatformFacade.__new__(LegalDocPlatformFacade)
     facade.registry = get_registry()
     facade.results_dir = str(tmp_path)
+    facade.fast_model_name = None
 
     doc = _doc("d1.pdf", "salary_deductions")
     doc["doc_type"] = "salary_deductions"

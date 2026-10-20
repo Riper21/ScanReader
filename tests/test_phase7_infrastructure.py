@@ -143,6 +143,7 @@ def _facade_with_text_processor(max_pages_sink, *, client=None):
     f.registry = get_registry()
     f._client = client
     f.model_name = "test-model"
+    f.fast_model_name = None
     f._get_client = lambda: client
     f.processor = type(
         "P", (), {
@@ -205,6 +206,7 @@ def test_empty_text_layer_rejected_before_model_call(tmp_path):
     f.registry = get_registry()
     f._client = None
     f.model_name = "test-model"
+    f.fast_model_name = None
 
     # Подготовка документа вызывается обязательно (нужно знать режим), но
     # сам вызов модели — нет: клиент не должен быть получен вовсе.

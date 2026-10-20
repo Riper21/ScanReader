@@ -98,6 +98,7 @@ def test_stage4_marks_failed_documents(tmp_path, capsys):
     facade = LegalDocPlatformFacade.__new__(LegalDocPlatformFacade)
     facade.registry = get_registry()
     facade.results_dir = str(tmp_path)
+    facade.fast_model_name = None
     src = tmp_path / "a.pdf"
     src.write_text("x")
     failed = {
@@ -124,6 +125,7 @@ def test_stage5_counts_failed_documents_not_as_processed(tmp_path, capsys):
     facade = LegalDocPlatformFacade.__new__(LegalDocPlatformFacade)
     facade.registry = get_registry()
     facade.results_dir = str(tmp_path)
+    facade.fast_model_name = None
     results = [{"doc_type": "salary_deductions", "status": "FAILED"} for _ in range(2)]
     facade._batch_stage5_metrics({"salary_deductions": ["a", "b"]}, results)
     out = capsys.readouterr().out
@@ -144,6 +146,7 @@ def test_stage4_and_stage5_agree_on_failure_count(tmp_path, capsys):
     facade = LegalDocPlatformFacade.__new__(LegalDocPlatformFacade)
     facade.registry = get_registry()
     facade.results_dir = str(tmp_path)
+    facade.fast_model_name = None
     files = []
     for name in ("a.pdf", "b.pdf", "c.pdf"):
         p = tmp_path / name

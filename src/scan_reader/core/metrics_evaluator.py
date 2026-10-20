@@ -845,7 +845,37 @@ def _measurement_caveats(doc_res: Dict[str, Any], mode_used: str, gt_available: 
     return caveats
 
 
-def generate_run_summary(all_category_metrics: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+def summarize_escalations(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Сводка каскада экстракции «быстрая -> мощная» по result-записям
+    process_single_document.
+
+    Правило 8: считаются обе стороны — сколько документов потребовали
+    запуска второй, дорогой модели (замены + неудачные попытки), и сколько
+    ответов реально улучшено заменой. Записи без data (сбои-исключения)
+    из знаменателя исключаются: каскад их не касался.
+    """
+    processed = [
+        r for r in results
+        if isinstance(r, dict) and r.get("status") != "FAILED" and isinstance(r.get("data"), dict)
+    ]
+    escalated = sum(1 for r in processed if r.get("escalated"))
+    l2_kept_fast = sum(1 for r in processed if (r.get("data") or {}).get("_escalation_l2_attempted"))
+    return {
+        "documents_with_extraction": len(processed),
+        "escalated_to_primary": escalated,
+        "l2_attempts_kept_fast": l2_kept_fast,
+        "second_model_runs": escalated + l2_kept_fast,
+        "escalation_rate_percent": (
+            round(escalated / len(processed) * 100.0, 1) if processed else 0.0
+        ),
+    }
+
+
+def generate_run_summary(
+    all_category_metrics: Dict[str, Dict[str, Any]],
+    escalation_stats: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """Формирует общую сводку запуска (Run Summary) по всем категориям документов."""
     # Защита: если передан отчет по одной категории напрямую (C-08)
     if isinstance(all_category_metrics, dict) and "documents" in all_category_metrics and "average_quality_score_percent" in all_category_metrics:
@@ -899,7 +929,7 @@ def generate_run_summary(all_category_metrics: Dict[str, Dict[str, Any]]) -> Dic
 
     overall_score = round(sum(all_scores) / len(all_scores), 2) if all_scores else 0.0
 
-    return {
+    summary = {
         "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "total_documents_processed": total_docs,
         "overall_quality_score_percent": overall_score,
@@ -918,6 +948,13 @@ def generate_run_summary(all_category_metrics: Dict[str, Dict[str, Any]]) -> Dic
         },
         "categories": categories_summary
     }
+    if escalation_stats is not None:
+        # Каскад экстракции: передаётся фасадом пакетной обработки.
+        # None = каскад не настроен и статистика не собиралась — секция
+        # опускается, а не пишется нулями, чтобы не выдавать «не измерено»
+        # за «измерено, ноль» (Правило 8).
+        summary["escalation"] = escalation_stats
+    return summary
 
 
 # ==============================================================================
@@ -977,6 +1014,19 @@ def export_run_summary_markdown(summary: Dict[str, Any], filepath: str):
 
     for cat_k, cat_v in summary.get("categories", {}).items():
         md.append(f"| `{cat_k}` | {cat_v.get('total_documents')} | {cat_v.get('mode')} | **{cat_v.get('average_quality_score_percent')}%** |")
+
+    escalation = summary.get("escalation")
+    if isinstance(escalation, dict):
+        # Каскад экстракции: экономика запуска, а не только качество.
+        # attempts включает неудачные попытки — оператор видит реальную
+        # стоимость второй модели, а не только выигрыш.
+        md += [
+            "\n## 3. Каскад экстракции (быстрая -> мощная модель)",
+            f"- Документов с экстракцией: **{escalation.get('documents_with_extraction', 0)}**",
+            f"- Запусков основной модели: **{escalation.get('second_model_runs', 0)}**",
+            f"- Ответов заменено на основную модель: **{escalation.get('escalated_to_primary', 0)}**",
+            f"- Доля заменённых: **{escalation.get('escalation_rate_percent', 0.0)}%**",
+        ]
 
     md.append("\n---\n*Отчет сгенерирован автоматически AI-Системой ScanReader.*")
 

@@ -106,6 +106,7 @@ Google Gemini напрямую не поддерживается — тольк�
 
 | Параметр | По умолчанию | Назначение |
 | :--- | :--- | :--- |
+| `VLM_FAST_MODEL_NAME` | — (выкл.) | Быстрая модель каскада экстракции «быстрая → мощная» (тот же эндпоинт/ключ): Уровень 1 — переэкстракция основной при провале барьеров (JSON/схема/заглушка doc_type/regex-восстановитель), Уровень 2 — при ошибках Zero-Trust ERROR-уровня; транспортные сбои эскалацией не считаются |
 | `VLM_HTTP_TIMEOUT` | 600 с | Таймаут HTTP-запроса к модели |
 | `VLM_SLOT_TIMEOUT` | 120 с | Ожидание слота в RateLimiter |
 | `VLM_RPM_LIMIT` | 60 | Лимит запросов в минуту к модели |
@@ -277,7 +278,7 @@ report.issues  # [VerificationIssue(code, message)]
 
 | Группа | Переменная | По умолчанию |
 | :--- | :--- | :--- |
-| Модель | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `AI_MODEL_NAME` | `http://localhost:11434/v1`, `qwen2.5-vl:7b`, `dummy_local_key` |
+| Модель | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `AI_MODEL_NAME`, `VLM_FAST_MODEL_NAME` | `http://localhost:11434/v1`, `qwen2.5-vl:7b`, `dummy_local_key`, — (каскад выкл.) |
 | Надежность | `VLM_HTTP_TIMEOUT` / `VLM_SLOT_TIMEOUT` / `VLM_ROUTER_CONFIDENCE_MIN` / `VLM_ROUTER_OVERRIDE_MIN` / `VLM_RPM_LIMIT` / `VLM_MAX_CONCURRENCY` / `SCANREADER_VLM_ATTEMPTS` / `SCANREADER_MAX_PAGES` | 600 / 120 / 0.5 / 0.85 / 60 / 2 / 2 / 20 |
 | Лимитеры | `ENABLE_RATE_LIMITER`, `ENABLE_CACHE` | true / true |
 | Кэш | `SCANREADER_CACHE_DIR`, `SCANREADER_MAX_CACHE_ENTRIES`, `SCANREADER_CACHE_FLUSH_EVERY`, `SCANREADER_CACHE_FLUSH_SECONDS` | `./.cache/scan_reader` / 2000 / 25 / 30 |

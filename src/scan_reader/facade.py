@@ -31,6 +31,7 @@ from .doc_types.universal import UniversalDocumentDoc, UNIVERSAL_PROMPT_TEXT
 from .core.metrics_evaluator import (
     evaluate_dataset,
     generate_run_summary,
+    summarize_escalations,
     export_metrics_json,
     append_to_metrics_history,
     export_run_summary_markdown,
@@ -193,6 +194,20 @@ class LegalDocPlatformFacade:
         self.base_url: str = base_url or os.getenv("OPENAI_BASE_URL", "http://localhost:11434/v1") or "http://localhost:11434/v1"
         self.api_key: str = api_key or os.getenv("OPENAI_API_KEY", "dummy_local_key") or "dummy_local_key"
         self.model_name: str = model_name or os.getenv("AI_MODEL_NAME", "qwen2.5-vl:7b") or "qwen2.5-vl:7b"
+
+        # Каскад экстракции «быстрая → мощная»: быстрая модель объявляется
+        # через VLM_FAST_MODEL_NAME. Пусто/отсутствует — одно-модельный режим,
+        # поведение идентично прежнему. Совпадение с основной моделью —
+        # вырожденная конфигурация: каскад считается выключенным, но молчать
+        # об этом нельзя (Правило 1 — предупреждение, а не тихий сбой).
+        fast_model = (os.getenv("VLM_FAST_MODEL_NAME") or "").strip()
+        if fast_model and fast_model == self.model_name:
+            logger.warning(
+                f"VLM_FAST_MODEL_NAME совпадает с AI_MODEL_NAME ('{self.model_name}'): "
+                "каскад экстракции выключен как вырожденный."
+            )
+            fast_model = ""
+        self.fast_model_name: Optional[str] = fast_model or None
 
         self.registry = get_registry()
         self.processor = FileProcessor()
@@ -582,6 +597,86 @@ class LegalDocPlatformFacade:
         max_pages: Optional[int] = None
     ) -> Dict[str, Any]:
         """
+        Публичная точка экстракции: одно-модельный режим или каскад
+        «быстрая → мощная» (VLM_FAST_MODEL_NAME).
+
+        Каскад: документ сначала экстрактирует быстрая модель, и её ответ
+        проходит те же барьеры, что и ответ основной (парсинг JSON, схема
+        плагина, защита doc_type, финансовый восстановитель — Уровень 1).
+        Провал барьера — полная переэкстракция основной моделью с нуля,
+        а не латание частичного ответа. Ответ основной модели финален:
+        эскалация одноразова и никогда не рекурсивна.
+
+        Транспортные сбои (сеть/таймаут/отсутствие клиента) эскалацией НЕ
+        считаются: эндпоинт общий, и основная модель упадёт так же —
+        документ честно завершается FAILED.
+
+        Эскалация по результату Zero-Trust аудита (Уровень 2) живёт в
+        process_single_document: аудиту нужен эталонный текст документа,
+        который не зависит от модели экстракции.
+        """
+        fast = self.fast_model_name
+        if not fast:
+            return self._extract_document_once(file_path, doc_type, max_pages)
+
+        result = self._extract_document_once(file_path, doc_type, max_pages, model_name=fast)
+        reason = self._cascade_escalation_reason(result)
+        if not reason:
+            return result
+
+        base_name = os.path.basename(file_path)
+        logger.warning(
+            f"Каскад: быстрая модель '{fast}' не прошла барьеры экстракции для "
+            f"'{base_name}' ({reason}) — полная переэкстракция основной моделью '{self.model_name}'."
+        )
+        second = self._extract_document_once(file_path, doc_type, max_pages, model_name=self.model_name)
+        if isinstance(second, dict):
+            # Маркеры эскалации навешиваются на финальный результат: оператор
+            # обязан видеть, КЕМ извлечены данные и ПОЧЕМУ сменилась модель.
+            second["_escalated_to_primary"] = True
+            second["_escalation_reason"] = reason
+            second["_escalated_from"] = fast
+        return second
+
+    @staticmethod
+    def _cascade_escalation_reason(result: Dict[str, Any]) -> str:
+        """
+        Уровень 1 каскада: сигналы качества ответа быстрой модели.
+
+        Возвращает пустую строку, если эскалация не требуется. Транспортные
+        сбои (_extraction_failed) и пустой текстовый слой — свойства
+        конвейера или документа, а не деградация модели: основная модель
+        на том же эндпоинте даст тот же исход, двойная стоимость бессмысленна.
+        """
+        if not isinstance(result, dict) or result.get("_extraction_failed"):
+            return ""
+        reasons: List[str] = []
+        recovered = list(result.get("_recovered_by_regex") or [])
+        if "_raw_reply_unparsed" in recovered:
+            reasons.append("raw_reply_unparsed")
+            recovered = [r for r in recovered if r != "_raw_reply_unparsed"]
+        if result.get("schema_validated") is False:
+            reasons.append("schema_failed")
+        if result.get("_doc_type_normalized"):
+            reasons.append("doc_type_placeholder")
+        if recovered:
+            reasons.append("regex_recovery:" + ",".join(sorted(recovered)))
+        return "; ".join(reasons)
+
+    def _extract_document_once(
+        self,
+        file_path: str,
+        doc_type: Optional[str] = None,
+        max_pages: Optional[int] = None,
+        model_name: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Один проход экстракции заданной моделью (каскад вызывает его дважды).
+
+        Модель участвует в четырёх местах: ключ кэша (записи двух моделей
+        никогда не сталкиваются), вызов API, статистика трекера и маркер
+        происхождения _extraction_model в результате.
+
         Мультимодальная экстракция полей документа (Specialized Branch)
         с последующей финансовой Regex-нормализацией и кэшированием.
 
@@ -591,6 +686,8 @@ class LegalDocPlatformFacade:
         десятки мегабайт base64, что заведомо не помещается в контекст модели
         и приводит к отказу на стороне провайдера.
         """
+        if model_name is None:
+            model_name = self.model_name
         if not doc_type or doc_type == UNKNOWN_CATEGORY:
             doc_type, _, _ = self.classify_document(file_path)
 
@@ -662,7 +759,7 @@ class LegalDocPlatformFacade:
             f":{schema_fingerprint}:{preproc}".encode("utf-8")
         ).hexdigest()
         cache_key_content = f"{mode}::{file_path}{file_stat}::{digest}"
-        cache_key = self.cache.compute_key(system_prompt, cache_key_content, self.model_name)
+        cache_key = self.cache.compute_key(system_prompt, cache_key_content, model_name)
 
         # Проверка кэша
         cached_resp = self.cache.get(cache_key)
@@ -694,8 +791,13 @@ class LegalDocPlatformFacade:
                     # повторный прогон видел тот же WARNING, что и первый.
                     if "_doc_type_normalized" in parsed and "_doc_type_normalized" not in cached_hit:
                         cached_hit["_doc_type_normalized"] = parsed["_doc_type_normalized"]
+                    # Каскад: происхождение кэшированного ответа обязано
+                    # выживать так же, как маркер Б2 — переэкстракция и
+                    # статистика строятся по фактической модели.
+                    if "_extraction_model" in parsed and "_extraction_model" not in cached_hit:
+                        cached_hit["_extraction_model"] = parsed["_extraction_model"]
                     self.tracker.record_call(
-                        model=self.model_name,
+                        model=model_name,
                         is_cache_hit=True,
                         stage_name=f"extract_{doc_type}",
                         doc_name=base_name,
@@ -747,7 +849,7 @@ class LegalDocPlatformFacade:
             try:
                 with self.rate_limiter:
                     response = client.chat.completions.create(
-                        model=self.model_name,
+                        model=model_name,
                         messages=messages,
                         temperature=0.0
                     )
@@ -768,7 +870,7 @@ class LegalDocPlatformFacade:
 
             # Регистрация токенов (каждая попытка — отдельный вызов модели)
             self.tracker.record_call(
-                model=self.model_name,
+                model=model_name,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=comp_tokens,
                 total_tokens=total_tokens,
@@ -912,6 +1014,13 @@ class LegalDocPlatformFacade:
         # из model_dump, поэтому он навешивается обратно (как raw_reply).
         if doc_type_normalized_from is not None:
             validated_dict["_doc_type_normalized"] = doc_type_normalized_from
+
+        # Каскад: происхождение данных. Тот же механизм выживания, что у
+        # raw_reply и _doc_type_normalized — схема выбрасывает ключ с
+        # подчёркиванием из model_dump, поэтому маркер навешивается после
+        # валидации и попадает в кэш-запись.
+        if isinstance(validated_dict, dict):
+            validated_dict["_extraction_model"] = model_name
 
         # P0.6: провальные и эвристические ответы не кэшируются. Раньше ответ
         # без JSON (raw_reply) или с суммами, восстановленными регексом,
@@ -1107,6 +1216,48 @@ class LegalDocPlatformFacade:
         validation["issues"] = issues
         return validation, quality_score, quality_status
 
+    @staticmethod
+    def _doc_type_placeholder_issue(doc_type_placeholder: str, doc_type: str) -> Dict[str, Any]:
+        """
+        Б2: issue о заглушке doc_type. Единый текст для первого прохода и
+        переоценки после эскалации каскада — формулировки не расходятся.
+        """
+        return {
+            "field": "doc_type",
+            "severity": "WARNING",
+            "message": (
+                f"Модель вернула заглушку вида документа "
+                f"«{doc_type_placeholder}» при верной маршрутизации "
+                f"('{doc_type}'); в data.doc_type записано каноническое "
+                f"значение из декларации плагина"
+            ),
+        }
+
+    def _reassess_extraction(
+        self,
+        extracted: Dict[str, Any],
+        doc_type: str,
+        base_name: str,
+        gt_data: Any,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any], float, str]:
+        """
+        Шаги 3 (Guardrails + Б2 + бенчмарк) для ЗАМЕНЁННОГО ответа эскалации:
+        валидация и метрики первого ответа устарели бы молча (Правило 1).
+        Возвращает (validation, doc_eval, quality_score, quality_status).
+        """
+        validation = self.validate_document(extracted, doc_type=doc_type)
+        doc_type_placeholder = str(extracted.get("_doc_type_normalized") or "")
+        if doc_type_placeholder:
+            validation.setdefault("issues", []).append(
+                self._doc_type_placeholder_issue(doc_type_placeholder, doc_type)
+            )
+            validation["passed"] = False
+        eval_report = evaluate_dataset([{"data": extracted, "file_name": base_name}], gt_data, doc_type=doc_type)
+        doc_eval = eval_report["documents"][0] if eval_report.get("documents") else {}
+        quality_score = doc_eval.get("overall_score", validation.get("score", 100.0))
+        quality_status = doc_eval.get("status", "excellent")
+        return validation, doc_eval, quality_score, quality_status
+
     def process_single_document(
         self,
         file_path: str,
@@ -1180,16 +1331,7 @@ class LegalDocPlatformFacade:
             doc_type_placeholder = str(extracted.get("_doc_type_normalized") or "")
         if doc_type_placeholder:
             validation.setdefault("issues", []).append(
-                {
-                    "field": "doc_type",
-                    "severity": "WARNING",
-                    "message": (
-                        f"Модель вернула заглушку вида документа "
-                        f"«{doc_type_placeholder}» при верной маршрутизации "
-                        f"('{doc_type}'); в data.doc_type записано каноническое "
-                        f"значение из декларации плагина"
-                    ),
-                }
+                self._doc_type_placeholder_issue(doc_type_placeholder, doc_type)
             )
             validation["passed"] = False
 
@@ -1261,6 +1403,83 @@ class LegalDocPlatformFacade:
                 gate_expected=True,
             )
 
+        # ---------------------------------------------------------------------
+        # Уровень 2 каскада экстракции: быстрая модель прошла барьеры Уровня 1
+        # (JSON, схема, doc_type, regex-восстановитель), но Zero-Trust нашёл
+        # данные, семантически невозможные ERROR-уровня: битые контрольные
+        # суммы, расхождения денег, лимиты удержания, хронологию или реквизиты,
+        # не подтверждённые кросс-модальным гейтом (HALLUCINATION_RISK).
+        # WARNING-уровень эскалацию не вызывает: эти замечания выдаст и
+        # основная модель, двойная стоимость без выигрыша.
+        #
+        # Быстрая модель — автор обоих инцидентных деградаций (заглушка
+        # doc_type, потеря «л/с»), поэтому «чистый по схеме» ответ аудиту
+        # не доверяется вслепую. Эталон гейта (raw_text) от модели не
+        # зависит — один и тот же для обеих попыток.
+        # ---------------------------------------------------------------------
+        if (
+            not extraction_failed
+            and self.fast_model_name
+            and isinstance(extracted, dict)
+            and extracted.get("_extraction_model") == self.fast_model_name
+        ):
+            fast_zt_errors = [i for i in zt_report.issues if i.severity == "error"]
+            if fast_zt_errors:
+                l2_codes = "; ".join(sorted({i.code for i in fast_zt_errors}))
+                logger.warning(
+                    f"Каскад (Уровень 2): быстрая модель '{self.fast_model_name}' прошла "
+                    f"барьеры экстракции, но Zero-Trust нашёл ошибки для '{base_name}' "
+                    f"({l2_codes}) — переэкстракция основной моделью '{self.model_name}'."
+                )
+                second = self._extract_document_once(file_path, doc_type=doc_type, model_name=self.model_name)
+                if isinstance(second, dict) and not second.get("_extraction_failed"):
+                    second_recovered = list(second.get("_recovered_by_regex") or [])
+                    second_method = "regex_fallback" if second_recovered else "vlm"
+                    second_zt = self.auditor.audit_document(
+                        data=second,
+                        doc_type=doc_type,
+                        raw_ocr_text=raw_text,
+                        extraction_method=second_method,
+                        scan_dpi=scan_dpi,
+                        gate_source=gate_source,
+                        gate_expected=True,
+                    )
+                    second_errors = [i for i in second_zt.issues if i.severity == "error"]
+                    # Основная модель — заявленный эталон оператора: её ответ
+                    # становится финальным, если не строго хуже быстрой по
+                    # числу ошибок аудита (ничья — в пользу основной). Иначе
+                    # остаётся быстрая, но попытка честно помечается.
+                    if len(second_errors) <= len(fast_zt_errors):
+                        second["_escalated_to_primary"] = True
+                        second["_escalation_reason"] = f"zero_trust:{l2_codes}"
+                        second["_escalated_from"] = self.fast_model_name
+                        extracted = second
+                        zt_report = second_zt
+                        recovered_fields = second_recovered
+                        extraction_method = second_method
+                        validation, doc_eval, quality_score, quality_status = self._reassess_extraction(
+                            extracted, doc_type=doc_type, base_name=base_name, gt_data=gt_data
+                        )
+                    else:
+                        extracted["_escalation_l2_attempted"] = True
+                        extracted["_escalation_l2_reason"] = (
+                            f"zero_trust:{l2_codes}; основная модель хуже "
+                            f"({len(second_errors)} ошибок против {len(fast_zt_errors)})"
+                        )
+                        logger.warning(
+                            f"Каскад (Уровень 2): ответ основной модели для '{base_name}' "
+                            f"строже хуже быстрой ({len(second_errors)} против "
+                            f"{len(fast_zt_errors)} ошибок) — оставлен ответ быстрой, "
+                            f"попытка помечена в результате."
+                        )
+                else:
+                    extracted["_escalation_l2_attempted"] = True
+                    extracted["_escalation_l2_reason"] = f"zero_trust:{l2_codes}; основная модель не ответила"
+                    logger.warning(
+                        f"Каскад (Уровень 2): основная модель не смогла переэкстрактировать "
+                        f"'{base_name}' — оставлен ответ быстрой модели с ошибками аудита."
+                    )
+
         # 5. Связность статусов (S-2): Guardrails / Quality / Zero-Trust образуют единый итог
         validation, quality_score, quality_status = self._combine_quality_and_validation(
             validation, quality_score, quality_status, zt_report
@@ -1295,6 +1514,14 @@ class LegalDocPlatformFacade:
             "doc_type_title": plugin.title if plugin else "Неопределенный документ",
             "classification_confidence": conf,
             "classification_method": method,
+            # Каскад экстракции: какой моделью получен итоговый data и была ли
+            # эскалация на основную модель (Уровень 1 — барьеры экстракции,
+            # Уровень 2 — ошибки Zero-Trust ERROR-уровня). Попытка эскалации,
+            # НЕ улучшившая результат, шапку не поднимает — финальный ответ
+            # остался от быстрой модели, факт попытки виден в data._escalation_l2_*.
+            "extraction_model": str(extracted.get("_extraction_model") or ""),
+            "escalated": bool(extracted.get("_escalated_to_primary")),
+            "escalation_reason": str(extracted.get("_escalation_reason") or ""),
             "data": extracted,
             "validation": validation,
             "zero_trust": zt_report.to_dict(),
@@ -1381,6 +1608,11 @@ class LegalDocPlatformFacade:
         client = self._get_client()
         if client:
             print(f"  [OK] Клиент подключен: {self.base_url} (Модель: {self.model_name})")
+            if self.fast_model_name:
+                print(
+                    f"  [OK] Каскад экстракции: FAST '{self.fast_model_name}' -> "
+                    f"основная '{self.model_name}'"
+                )
         else:
             print("  [WARN] Клиент не инициализирован. Проверьте .env конфигурацию.")
 
@@ -1463,7 +1695,10 @@ class LegalDocPlatformFacade:
                     # [OK] и [ОШИБКА] обязаны различаться: маркировка провала
                     # как OK прятала сбои экстракции в сводке этапа.
                     marker = "[ОШИБКА" if res.get("status") == "FAILED" else "[OK"
-                    print(f" {marker} {dur}s | Качество: {q_score}% | ZT: {zt_status}]")
+                    # Каскад: ответ заменён основной моделью — оператор видит,
+                    # что документ стоил двух вызовов.
+                    esc_flag = " | ⬆️ каскад" if res.get("escalated") else ""
+                    print(f" {marker} {dur}s | Качество: {q_score}% | ZT: {zt_status}{esc_flag}]")
                     save_checkpoint(cat_results, checkpoint_file)
                 except Exception as e:
                     dur = round(time.perf_counter() - t_start, 2)
@@ -1519,6 +1754,18 @@ class LegalDocPlatformFacade:
         failed = sum(1 for r in results if r.get("status") == "FAILED")
         print(f" • Успешно обработано: {completed} | Сбоев: {failed}")
 
+        # Каскад экстракции: сводка пишется всегда (нули в одно-модельном
+        # режиме — правда, а не «не измерено»), а консольная строка печатается
+        # только при настроенном каскаде — 90% пользователей её не ждут.
+        escalation_stats = summarize_escalations(results)
+        if self.fast_model_name:
+            print(
+                f" • Каскад моделей: основная запускалась для "
+                f"{escalation_stats['second_model_runs']} из "
+                f"{escalation_stats['documents_with_extraction']} документов "
+                f"(заменено ответов: {escalation_stats['escalated_to_primary']})"
+            )
+
         all_category_metrics: Dict[str, Dict[str, Any]] = {}
         for cat_k in grouped_files:
             cat_docs = [r for r in results if r.get("doc_type") == cat_k and r.get("status") != "FAILED"]
@@ -1540,7 +1787,7 @@ class LegalDocPlatformFacade:
                   f"🟠 Удовл.: {st.get('satisfactory', 0)} | 🔴 Внимание: {st.get('needs_attention', 0)}")
 
         if all_category_metrics:
-            run_summary = generate_run_summary(all_category_metrics)
+            run_summary = generate_run_summary(all_category_metrics, escalation_stats=escalation_stats)
             export_metrics_json(run_summary, os.path.join(self.results_dir, "run_metrics_summary.json"))
             export_run_summary_markdown(run_summary, os.path.join(self.results_dir, "run_metrics_summary.md"))
             append_to_metrics_history(run_summary, os.path.join(self.results_dir, "metrics_history.json"))

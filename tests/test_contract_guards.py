@@ -141,6 +141,7 @@ def test_document_status_vocabulary_frozen():
 FROZEN_FULL_RECORD_KEYS = {
     "file_name", "file_path", "doc_type", "doc_type_title",
     "classification_confidence", "classification_method", "data", "validation",
+    "extraction_model", "escalated", "escalation_reason",
     "zero_trust", "zero_trust_status", "quality_score_percent", "quality_status",
     "metrics", "measurement_caveats", "recovered_by_regex",
     "requires_human_review", "status", "errors", "processed_at",
@@ -191,7 +192,7 @@ FROZEN_ENV_VARS = {
     "SCANREADER_OCR_CROSSCHECK", "SCANREADER_OCR_ENABLED", "SCANREADER_OCR_ENGINE",
     "SCANREADER_OCR_LANG", "SCANREADER_OCR_MAX_PAGES", "SCANREADER_OCR_MIN_TEXT_LENGTH",
     "SCANREADER_OUTPUT_DIR", "SCANREADER_VLM_ATTEMPTS",
-    "VLM_HTTP_TIMEOUT", "VLM_MAX_CONCURRENCY", "VLM_ROUTER_CONFIDENCE_MIN",
+    "VLM_FAST_MODEL_NAME", "VLM_HTTP_TIMEOUT", "VLM_MAX_CONCURRENCY", "VLM_ROUTER_CONFIDENCE_MIN",
     "VLM_RPM_LIMIT", "VLM_SLOT_TIMEOUT", "VLM_TIMEOUT",
 }
 

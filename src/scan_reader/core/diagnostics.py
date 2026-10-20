@@ -230,10 +230,18 @@ def run_vlm_diagnostics(verbose: bool = True) -> Dict[str, Any]:
     api_key = os.getenv("OPENAI_API_KEY", "dummy_local_key")
     base_url = os.getenv("OPENAI_BASE_URL", "http://localhost:11434/v1")
     model_name = os.getenv("AI_MODEL_NAME", "qwen2.5-vl:7b")
+    # Каскад экстракции: вырожденная конфигурация (fast == основная)
+    # фасадом игнорируется с WARNING — здесь тот же вердикт.
+    raw_fast_model = os.getenv("VLM_FAST_MODEL_NAME", "")
+    fast_model = raw_fast_model if raw_fast_model and raw_fast_model != model_name else ""
 
     if verbose:
         print("\n📋 1. Параметры конфигурации:")
         print(f"  • Модель (AI_MODEL_NAME):       {model_name}")
+        if raw_fast_model and not fast_model:
+            print("  • Быстрая модель:               равна основной — каскад выключен")
+        else:
+            print(f"  • Быстрая модель (VLM_FAST_MODEL_NAME): {fast_model or '— (каскад выключен)'}")
         print(f"  • Шлюз (OPENAI_BASE_URL):       {base_url}")
         print(f"  • API-ключ:                     {mask_key(api_key)}")
 
@@ -252,7 +260,7 @@ def run_vlm_diagnostics(verbose: bool = True) -> Dict[str, Any]:
         print("\n⚡ 3. Тестовый запрос к модели (Замер TTFT и скорости)...")
 
     results: Dict[str, Any] = {
-        "config": {"model": model_name, "base_url": base_url, "api_key": mask_key(api_key)},
+        "config": {"model": model_name, "fast_model": fast_model, "base_url": base_url, "api_key": mask_key(api_key)},
         "ping": ping_res,
         "inference": {"status": "skipped"}
     }
@@ -308,6 +316,46 @@ def run_vlm_diagnostics(verbose: bool = True) -> Dict[str, Any]:
             if speed > 0:
                 print(f"  • Скорость генерации: {speed} токенов/сек.")
 
+        # Каскад «быстрая -> мощная»: короткий тест-вызов быстрой модели —
+        # тот же эндпоинт и ключ, отличается только model=. Проверять её
+        # обязательно: примерно половина сбоев каскада — опечатка в имени
+        # быстрой модели, которую основной тест не видит.
+        if fast_model:
+            if verbose:
+                print(f"\n⚡ 3.5. Тестовый запрос к быстрой модели ({fast_model})...")
+            try:
+                start_f = time.perf_counter()
+                resp_f = client.chat.completions.create(
+                    model=fast_model,
+                    messages=[{"role": "user", "content": test_prompt}],
+                    temperature=0.0,
+                    max_tokens=50
+                )
+                fast_time = time.perf_counter() - start_f
+                usage_f = resp_f.usage
+                fast_tokens = usage_f.total_tokens if usage_f else 0
+                results["inference_fast"] = {
+                    "status": "ok",
+                    "model": fast_model,
+                    "latency_sec": round(fast_time, 3),
+                    "total_tokens": fast_tokens,
+                }
+                tracker.record_call(
+                    model=fast_model,
+                    prompt_tokens=usage_f.prompt_tokens if usage_f else 0,
+                    completion_tokens=usage_f.completion_tokens if usage_f else 0,
+                    total_tokens=fast_tokens,
+                    latency_sec=fast_time,
+                    stage_name="diagnostics_fast"
+                )
+                if verbose:
+                    print(f"  ✅ Быстрая модель ответила за {round(fast_time, 3)} сек.")
+            except Exception as fast_e:
+                results["inference_fast"] = {"status": "error", "model": fast_model, "error": str(fast_e)}
+                if verbose:
+                    print(f"  ⚠️ Быстрая модель недоступна: {fast_e}")
+                    print("     Каскад деградирует до одно-модельного режима (основная модель).")
+
     except Exception as e:
         results["inference"] = {"status": "error", "error": str(e)}
         if verbose:
@@ -319,6 +367,11 @@ def run_vlm_diagnostics(verbose: bool = True) -> Dict[str, Any]:
 
     if inf_status == "ok":
         results["status"] = "ok"
+        # Основная модель жива, быстрая — нет: конвейер работоспособен в
+        # одно-модельном режиме, но заявленный каскад деградировал. Это не
+        # безоговорочное «ok» (Правило 8 — честность статусов).
+        if isinstance(results.get("inference_fast"), dict) and results["inference_fast"].get("status") == "error":
+            results["status"] = "warning"
     else:
         results["status"] = "error"
         err_msg = results.get("inference", {}).get("error") or results.get("ping", {}).get("error") or "VLM/LLM unreachable"

@@ -8,6 +8,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Extraction cascade "fast -> powerful" (`VLM_FAST_MODEL_NAME`), one
+  endpoint, two models. 909 tests (was 887):
+  - Empty variable: single-model mode, behavior identical to before.
+    Degenerate config (fast == primary) disables the cascade with a
+    WARNING.
+  - Level 1 (inside `extract_document_data`): the fast model extracts
+    first; a full re-extraction by the primary model triggers on
+    `raw_reply_unparsed` / `schema_failed` / `doc_type_placeholder` /
+    `regex_recovery:...`. Transport failures do NOT escalate: the
+    endpoint is shared, the primary would fail the same way.
+  - Level 2 (in `process_single_document`): the fast model passed the
+    extraction barriers, but Zero-Trust found ERROR-severity issues
+    (checksums, money math, statutory limits, chronology, cross-modal
+    gate) — the primary model re-extracts and re-audits; its answer is
+    final unless strictly worse (a tie prefers the primary as the
+    operator's reference model). WARNINGs never escalate. Validation and
+    benchmark are recomputed for the replaced answer: stale metrics
+    would be a silent failure (Rule 1).
+  - Markers: `_extraction_model` (always), `_escalated_to_primary`,
+    `_escalation_reason`, `_escalated_from` in `data`; the record header
+    exposes `extraction_model` / `escalated` / `escalation_reason`. A
+    failed escalation attempt (fast answer kept) stays visible via
+    `data._escalation_l2_*`. Cache keys are model-scoped; a failed fast
+    reply is never cached.
+  - Run summary: an `escalation` section (replacements, kept-fast
+    attempts, second-model runs) in `run_metrics_summary.json/.md`;
+    batch stage 5 prints the share; doctor config lists the fast model
+    and probes it with a short call (`diagnostics_fast`), degrading to
+    `warning` when only the fast model is down. Excel/1C exporter is
+    untouched.
+
 ### Fixed
 
 - Incident "the `л/с` label of the personal account is lost inside
